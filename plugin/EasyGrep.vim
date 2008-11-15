@@ -10,7 +10,14 @@
 "               vim@danprice.fastmail.net
 "
 " Version:      See g:EasyGrepVersion for version number.
-" History:      0.1 Initial version
+" History:     
+"   0.2 Added option to toggle showing fewer or more options; showing fewer
+"       options by default.
+"       Added option '?' to print the current configuration and save it to a
+"       register.
+"       Now creating direct mapping by default; see g:EasyGrepNoDirectMappings
+"       to turn this off.
+"   0.1 Initial version
 "
 "
 " Keymappings:
@@ -34,7 +41,7 @@
 "    ":GrepAdd" - Search for the specified pattern, add to existing file list,
 "    as in <Leader>va.  When an ! is added, search like <Leader>vA
 "
-"    ":GrepOptions" - With no parameter, open a window to set options With a
+"    ":GrepOptions" - With no parameter, open a window to set options.  With a
 "    parameter, set the file pattern to the parameter Options
 "
 " Options:
@@ -91,14 +98,13 @@
 "    "g:EasyGrepFileAssociationsInExplorer" - Specifies whether to include the
 "    file associations when sizing the explorer window
 "
-"    "g:EasyGrepCreateDirectMappings" - Specifies that a set of mappings be
+"    "g:EasyGrepNoDirectMappings" - Specifies that a set of mappings be
 "    generated that allow options to be set without the options explorer window
 
 " Idea: Integrate a global find and replace with this
 " Idea: allow entries in the file associations list to be regular expressions
 " Idea: include special paths like $INCLUDE in the mix
 " Idea: set file/directory exclusions
-" Idea: add an option to ignore case that is independent of ignorecase
 
 "
 " Initialization {{{
@@ -253,8 +259,8 @@ if !exists("g:EasyGrepFileAssociationsInExplorer")
     let g:EasyGrepFileAssociationsInExplorer=1
 endif
 
-if !exists("g:EasyGrepCreateDirectMappings")
-    let g:EasyGrepCreateDirectMappings=0
+if !exists("g:EasyGrepNoDirectMappings")
+    let g:EasyGrepNoDirectMappings=0
 endif
 "}}}
 
@@ -287,6 +293,8 @@ endfunction
 " OpenOptionsExplorer {{{
 function! s:OpenOptionsExplorer()
     let s:OptionsExplorerOpen = 1
+
+    call s:CreateOptions()
 
     let windowLines = len(s:Options) + 1
     if g:EasyGrepFileAssociationsInExplorer
@@ -330,15 +338,13 @@ function! s:OpenOptionsExplorer()
     nnoremap <buffer> <silent> !    :call <sid>ToggleWholeWord()<cr>
     nnoremap <buffer> <silent> e    :call <sid>EchoFilesSearched()<cr>
     nnoremap <buffer> <silent> s    :call <sid>Sort()<cr>
+    nnoremap <buffer> <silent> ?    :call <sid>EchoOptionsSet()<cr>
+    nnoremap <buffer> <silent> /    :call <sid>ToggleOptionsDisplay()<cr>
     nnoremap <buffer> <silent> <cr> :call <sid>Select()<cr>
     nnoremap <buffer> <silent> :    :call <sid>Echo("Type q to quit")<cr>
 
     call s:BuildPatternList()
     call s:FillWindow()
-
-    " place the cursor at the start of the special options
-    execute "".len(s:Options)+1
-
 endfunction
 " }}}
 " Options Explorer Mapped Functions {{{
@@ -371,6 +377,38 @@ function! <sid>EchoFilesSearched()
         call s:Echo("No files match the current options")
     endif
 endfunction
+"}}}
+" EchoOptionsSet {{{
+function! <sid>EchoOptionsSet()
+
+    let optList = [ 
+            \ "g:EasyGrepFileAssociations",
+            \ "g:EasyGrepMode",
+            \ "g:EasyGrepCommand",
+            \ "g:EasyGrepRecursive",
+            \ "g:EasyGrepHidden",
+            \ "g:EasyGrepAllOptionsInExplorer",
+            \ "g:EasyGrepWindow",
+            \ "g:EasyGrepOpenWindowOnMatch",
+            \ "g:EasyGrepEveryMatch",
+            \ "g:EasyGrepJumpToMatch",
+            \ "g:EasyGrepInvertWholeWord",
+            \ "g:EasyGrepFileAssociationsInExplorer",
+            \ "g:EasyGrepNoDirectMappings" 
+            \ ]
+
+    let str = ""
+    for item in optList
+        let str .= "let ".item."=".eval(item)."\n"
+    endfor
+
+    call s:Warn("The following options will be saved in the e register; type \"ep to paste into your .vimrc")
+    redir @e
+    echo str
+    redir END
+
+endfunction
+
 "}}}
 " Select {{{
 function! <sid>Select()
@@ -407,6 +445,10 @@ function! s:ActivateChoice(choice)
 
     if choice < 0 || choice == s:NumSpecialOptions
         return
+    endif
+
+    if choice < 3
+        let g:EasyGrepMode = choice
     endif
 
     " handles the space in between the special options and file patterns
@@ -592,6 +634,27 @@ function! <sid>ToggleWholeWord()
     call s:Echo("Set invert the meaning of whole word to (".s:OnOrOff(g:EasyGrepInvertWholeWord).")")
 endfunction
 "}}}
+" ToggleOptionsDisplay {{{
+function! <sid>ToggleOptionsDisplay()
+    let g:EasyGrepAllOptionsInExplorer = !g:EasyGrepAllOptionsInExplorer
+
+    if s:OptionsExplorerOpen
+        let oldWindowLines = len(s:Options) + 1
+        call s:FillWindow()
+        let newWindowLines = len(s:Options) + 1
+
+        let linesDiff = newWindowLines-oldWindowLines
+        if linesDiff > 0
+            let linesDiff = "+".linesDiff
+        endif
+
+        execute "resize ".linesDiff
+        normal zb
+    endif
+
+    call s:Echo("Showing ". (g:EasyGrepAllOptionsInExplorer ? "more" : "fewer")." options")
+endfunction
+"}}}
 " Quit {{{
 function! <sid>Quit()
     let s:OptionsExplorerOpen = 0
@@ -606,39 +669,14 @@ function! s:UpdateOptions()
         return
     endif
 
-    let WindowName = g:EasyGrepWindow==0 ? 'quickfix' : 'location list'
-
-    let optList = []
-    call add(optList, "\"q: quit")
-    call add(optList, "\"c: change grep command (".s:Commands[s:CommandChoice].")")
-    call add(optList, "\"r: recursive mode (".s:OnOrOff(g:EasyGrepRecursive).")")
-    call add(optList, "\"i: include hidden files (".s:OnOrOff(g:EasyGrepHidden).")")
-    if g:EasyGrepAllOptionsInExplorer
-        call add(optList, "\"w: window to use (".WindowName.")")
-        call add(optList, "\"o: open window on match (".s:OnOrOff(g:EasyGrepOpenWindowOnMatch).")")
-        call add(optList, "\"g: seperate multiple matches (".s:OnOrOff(g:EasyGrepEveryMatch).")")
-        call add(optList, "\"p: jump to match (".s:OnOrOff(g:EasyGrepJumpToMatch).")")
-        call add(optList, "\"!: invert the meaning of whole word (".s:OnOrOff(g:EasyGrepInvertWholeWord).")")
-    endif
-    call add(optList, "\"e: echo files that would be searched")
-    call add(optList, "\"s: change sorting (".s:SortOptions[s:SortChoice].")")
-    if g:EasyGrepAllOptionsInExplorer
-        call add(optList, "")
-        call add(optList, "\"a: activate 'All' mode")
-        call add(optList, "\"b: activate 'Buffers' mode")
-        call add(optList, "\"t: activate 'TrackExt' mode")
-        call add(optList, "\"u: activate 'User' mode")
-    endif
-    call add(optList, "")
-    call add(optList, "\"Current Directory: ".getcwd())
-    call add(optList, "\"Grep Targets: ".s:FilesToGrep)
+    call s:CreateOptions()
 
     setlocal modifiable
 
-    let lastLine = len(optList)
+    let lastLine = len(s:Options)
     let line = 0
     while line < lastLine
-        call setline(line+1, optList[line])
+        call setline(line+1, s:Options[line])
         let line += 1
     endwhile
 
@@ -679,9 +717,14 @@ function! s:FillWindow()
 
     setlocal modifiable
 
+    " Clear the entire window
+    execute "silent %delete"
+
+    call s:CreateOptions()
     call append(0, s:Options)
     let s:firstPatternLine = len(s:Options) + 1
     call s:UpdateOptions()
+
     setlocal modifiable
 
     let i = 0
@@ -691,6 +734,10 @@ function! s:FillWindow()
         let i += 1
     endwhile
     call s:UpdateAll()
+    setlocal nomodifiable
+
+    " place the cursor at the start of the special options
+    execute "".len(s:Options)+1
 endfunction
 " }}}
 " }}}
@@ -892,38 +939,44 @@ function! s:HasMatches()
     return !empty(getqflist())
 endfunction
 "}}}
+" CreateOptions {{{
+function! s:CreateOptions()
+
+    let s:Options = []
+
+    call add(s:Options, "\"q: quit")
+    call add(s:Options, "\"r: recursive mode (".s:OnOrOff(g:EasyGrepRecursive).")")
+    call add(s:Options, "\"i: include hidden files (".s:OnOrOff(g:EasyGrepHidden).")")
+    call add(s:Options, "\"e: echo files that would be searched")
+    if g:EasyGrepAllOptionsInExplorer
+        call add(s:Options, "\"c: change grep command (".s:Commands[s:CommandChoice].")")
+        call add(s:Options, "\"w: window to use (".(g:EasyGrepWindow==0 ? 'quickfix' : 'location list').")")
+        call add(s:Options, "\"o: open window on match (".s:OnOrOff(g:EasyGrepOpenWindowOnMatch).")")
+        call add(s:Options, "\"g: seperate multiple matches (".s:OnOrOff(g:EasyGrepEveryMatch).")")
+        call add(s:Options, "\"p: jump to match (".s:OnOrOff(g:EasyGrepJumpToMatch).")")
+        call add(s:Options, "\"!: invert the meaning of whole word (".s:OnOrOff(g:EasyGrepInvertWholeWord).")")
+        call add(s:Options, "\"s: change sorting (".s:SortOptions[s:SortChoice].")")
+        call add(s:Options, "")
+        call add(s:Options, "\"a: activate 'All' mode")
+        call add(s:Options, "\"b: activate 'Buffers' mode")
+        call add(s:Options, "\"t: activate 'TrackExt' mode")
+        call add(s:Options, "\"u: activate 'User' mode")
+        call add(s:Options, "")
+        call add(s:Options, "\"?: Echo options that are set")
+    endif
+    call add(s:Options, "\"/: show ". (g:EasyGrepAllOptionsInExplorer ? "fewer" : "more")." options")
+    call add(s:Options, "")
+    call add(s:Options, "\"Current Directory: ".getcwd())
+    call add(s:Options, "\"Grep Targets: ".s:FilesToGrep)
+    call add(s:Options, "")
+
+endfunction
+"}}}
 " CreateDict {{{
 function! s:CreateDict()
     if exists("s:Dict")
         return
     endif
-
-    " TODO: figure out a better way to do this
-    let s:Options = []
-    call add(s:Options, "") " quit
-    call add(s:Options, "") " command
-    call add(s:Options, "") " recursion
-    call add(s:Options, "") " hidden
-    if g:EasyGrepAllOptionsInExplorer
-        call add(s:Options, "") " window to use
-        call add(s:Options, "") " open window on match
-        call add(s:Options, "") " everymatch
-        call add(s:Options, "") " jump
-        call add(s:Options, "") " whole word
-    endif
-    call add(s:Options, "") " echo files searched
-    call add(s:Options, "") " sorting
-    if g:EasyGrepAllOptionsInExplorer
-        call add(s:Options, "") " space
-        call add(s:Options, "") " all
-        call add(s:Options, "") " buffers
-        call add(s:Options, "") " trackext
-        call add(s:Options, "") " user
-    endif
-    call add(s:Options, "")
-    call add(s:Options, "") " cwd
-    call add(s:Options, "") " current pattern
-    call add(s:Options, "")
 
     let s:Dict = [ ]
     call add(s:Dict, [ "All" , "*", g:EasyGrepMode==0 ? 1 : 0 ] )
@@ -1103,6 +1156,8 @@ function! s:CreateDirectMappings()
     nmap <silent> <leader>vy!    :call <sid>ToggleWholeWord()<cr>
     nmap <silent> <leader>vye    :call <sid>EchoFilesSearched()<cr>
     nmap <silent> <leader>vys    :call <sid>Sort()<cr>
+    nmap <silent> <leader>vy/    :call <sid>ToggleOptionsDisplay()<cr>
+    nmap <silent> <leader>vy?    :call <sid>EchoOptionsSet()<cr>
 endfunction
 "}}}
 " GrepCurrentWord {{{
@@ -1325,7 +1380,7 @@ nmap <silent> <unique> <script> <plug>EgMapGrepCurrentWordA :call <sid>GrepCurre
 "nmap <silent> <unique> <script> <plug>EgMapReplaceCurrentWordr :call <sid>ReplaceCurrentWord(0)<CR>
 "nmap <silent> <unique> <script> <plug>EgMapReplaceCurrentWordR :call <sid>ReplaceCurrentWord(1)<CR>
 
-if g:EasyGrepCreateDirectMappings
+if !g:EasyGrepNoDirectMappings
     call s:CreateDirectMappings()
 endif
 "}}}
