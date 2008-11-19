@@ -11,11 +11,13 @@
 "
 " Version:      See g:EasyGrepVersion for version number.
 " History:     
+"   0.3 Added experimental :Replace and :ReplaceUndo commands; keymapped <leader>vr for :Replace
+"       Improved response when no matches
 "   0.2 Added option to toggle showing fewer or more options; showing fewer
 "       options by default.
 "       Added option '?' to print the current configuration and save it to a
 "       register.
-"       Now creating direct mapping by default; see g:EasyGrepNoDirectMappings
+"       Now creating direct mappings by default; see g:EasyGrepNoDirectMappings
 "       to turn this off.
 "   0.1 Initial version
 "
@@ -29,20 +31,41 @@
 "    <Leader>va  - Like vv, but add to existing list
 "    <Leader>vA  - Like vV, but add to existing list
 "
-"    Each of these commands will search files according to settings controlled
-"    by:
+"    <Leader>vr  - Perform a global search search on the word under the cursor
+"                  and prompt for a pattern with which to replace it.
+"
+"    Each of the above commands will search files according to settings
+"    controlled by:
 "
 "    <Leader>vo  - Select the files to search in and set grep options
 "
+"    Note: These keymappings may be remapped to your liking; see the end of the
+"    file for the associated plugin mappings
+"
 " Commands:
 "
-"    ":Grep" - Search for the specified pattern, like <Leader>vv.  When an ! is
-"    added, search like <Leader>vV
-"    ":GrepAdd" - Search for the specified pattern, add to existing file list,
-"    as in <Leader>va.  When an ! is added, search like <Leader>vA
+"    ":Grep [arg]"
+"        Search for the specified arg, like <Leader>vv.  When an ! is added,
+"        search like <Leader>vV
 "
-"    ":GrepOptions" - With no parameter, open a window to set options.  With a
-"    parameter, set the file pattern to the parameter Options
+"    ":GrepAdd [arg]" 
+"        Search for the specified arg, add to existing file list, as in
+"        <Leader>va.  When an ! is added, search like <Leader>vA
+"
+"    ":Replace [target] [replacement]"
+"        Perform a global search and replace.  The function searches
+"        the same set of files a grep for the desired target and opens a dialog to
+"        confirm replacement.
+"    
+"    ":ReplaceUndo" 
+"        Undoes the last :Replace operation.  Does not stack successive
+"        searches; only the last replace may be undone.  This function may not
+"        work well when edits are made between a call to Replace and a call to
+"        ReplaceUndo.
+"
+"    ":GrepOptions [arg]" 
+"        With no arg, open a window to set options.  With an arg, set the file
+"        pattern to arg.
 "
 " Options:
 "
@@ -100,18 +123,34 @@
 "
 "    "g:EasyGrepNoDirectMappings" - Specifies that a set of mappings be
 "    generated that allow options to be set without the options explorer window
+"
+"    "g:EasyGrepReplaceAllPerFile" - Specifies that selecting 'a' will apply the
+"    replacements on a per file basis, as opposed to globally as is the default
+"
 
-" Idea: Integrate a global find and replace with this
+" TODO: eliminate the problem where starting at a cpp file and going to a c file
+"       no longer searches in cpp
+" TODO: consider that location list shouldn't work across files and the way I've
+"       implemented it probably won't work
+" TODO: experiment with tabdo/bufdo undo in ReplaceUndo instead of currently
+"       implemented substitute; consider though that each window may have a different
+"       number of replacements per file
+
 " Idea: allow entries in the file associations list to be regular expressions
 " Idea: include special paths like $INCLUDE in the mix
 " Idea: set file/directory exclusions
+" Idea: warn when grepping from a directory that is not the directory in which
+" the source file lies
+" Idea: regex search and replace
+" Idea: create a replace option that is similar to GrepOptions?
+" Idea: provide three modes for global replace: split, tabs, autowriteall
 
 "
 " Initialization {{{
-if exists("g:EasyGrepVersion") || &cp
+if exists("g:EasyGrepVersion") || &cp || !has("quickfix")
     finish
 endif
-let g:EasyGrepVersion = "0.4"
+let g:EasyGrepVersion = "0.3"
 " Check for Vim version 700 or greater {{{
 if v:version < 700
   echo "Sorry, EasyGrep ".g:EasyGrepVersion."\nONLY runs with Vim 7.0 and greater."
@@ -140,13 +179,40 @@ function! s:BackToForwardSlash(arg)
     return substitute(a:arg, '\\', '/', 'g')
 endfunction
 "}}}
-" GetBufferNamesList {{{
-function! s:GetBufferNamesList()
+" GetBuffersOutput {{{
+function! s:GetBuffersOutput()
     redir => bufoutput
     silent! buffers
     " This echo clears a bug in printing that shows up when it is not present
     silent! echo ""
     redir END
+
+    return bufoutput
+endfunction
+" }}}
+" GetBufferIdList {{{
+function! s:GetBufferIdList()
+    let bufoutput = s:GetBuffersOutput()
+
+    let bufids = []
+    for i in split(bufoutput, '\n')
+        let s1 = 0
+        while i[s1] == ' '
+            let s1 += 1
+        endwhile
+
+        let s2 = stridx(i, ' ', s1) - 1
+        let id = str2nr(i[s1 : s2])
+
+        call add(bufids, id)
+    endfor
+
+    return bufids
+endfunction
+" }}}
+" GetBufferNamesList {{{
+function! s:GetBufferNamesList()
+    let bufoutput = s:GetBuffersOutput()
 
     let bufNames = []
     for i in split(bufoutput, '\n')
@@ -193,7 +259,7 @@ function! s:Trim(s)
 endfunction
 "}}}
 " Warning/Error {{{
-function! s:Warn(message)
+function! s:Warning(message)
     echohl WarningMsg | echomsg "[EasyGrep] ".a:message | echohl None
 endfunction
 function! s:Error(message)
@@ -262,6 +328,15 @@ endif
 if !exists("g:EasyGrepNoDirectMappings")
     let g:EasyGrepNoDirectMappings=0
 endif
+
+if !exists("g:EasyGrepReplaceAllPerFile")
+    let g:EasyGrepReplaceAllPerFile=0
+endif
+
+if !exists("g:EasyGrepNoTabs")
+    let g:EasyGrepNoTabs=0
+endif
+
 "}}}
 
 " Internals {{{
@@ -402,7 +477,7 @@ function! <sid>EchoOptionsSet()
         let str .= "let ".item."=".eval(item)."\n"
     endfor
 
-    call s:Warn("The following options will be saved in the e register; type \"ep to paste into your .vimrc")
+    call s:Warning("The following options will be saved in the e register; type \"ep to paste into your .vimrc")
     redir @e
     echo str
     redir END
@@ -598,8 +673,7 @@ function! <sid>ToggleWindow()
     let g:EasyGrepWindow = !g:EasyGrepWindow
     call s:UpdateOptions()
 
-    let WindowName = g:EasyGrepWindow==0 ? 'quickfix' : 'location list'
-    call s:Echo("Set window to (".WindowName.")")
+    call s:Echo("Set window to (".s:GetErrorListName().")")
 endfunction
 "}}}
 " ToggleOpenWindow {{{
@@ -936,7 +1010,25 @@ endfunction
 "}}}
 " HasMatches{{{
 function! s:HasMatches()
-    return !empty(getqflist())
+    return !empty(s:GetErrorList())
+endfunction
+"}}}
+" GetErrorList {{{
+function! s:GetErrorList()
+    if g:EasyGrepWindow == 0
+        return getqflist()
+    else
+        return getloclist()
+    endif
+endfunction
+"}}}
+" GetErrorListName {{{
+function! s:GetErrorListName()
+    if g:EasyGrepWindow == 0
+        return 'quickfix'
+    else
+        return 'location list'
+    endif
 endfunction
 "}}}
 " CreateOptions {{{
@@ -950,7 +1042,7 @@ function! s:CreateOptions()
     call add(s:Options, "\"e: echo files that would be searched")
     if g:EasyGrepAllOptionsInExplorer
         call add(s:Options, "\"c: change grep command (".s:Commands[s:CommandChoice].")")
-        call add(s:Options, "\"w: window to use (".(g:EasyGrepWindow==0 ? 'quickfix' : 'location list').")")
+        call add(s:Options, "\"w: window to use (".s:GetErrorListName().")")
         call add(s:Options, "\"o: open window on match (".s:OnOrOff(g:EasyGrepOpenWindowOnMatch).")")
         call add(s:Options, "\"g: seperate multiple matches (".s:OnOrOff(g:EasyGrepEveryMatch).")")
         call add(s:Options, "\"p: jump to match (".s:OnOrOff(g:EasyGrepJumpToMatch).")")
@@ -1022,7 +1114,7 @@ function! s:ParseFileAssociationList()
 
         let keys = split(line, "=")
         if len(keys) != 2
-            call s:Warn("Invalid line: ".line)
+            call s:Warning("Invalid line: ".line)
             continue
         endif
 
@@ -1031,11 +1123,11 @@ function! s:ParseFileAssociationList()
 
         " TODO: check that keys[0] is well-formed
         if len(keys[0]) == 0 || len(keys[1]) == 0
-            call s:Warn("Invalid line: ".line)
+            call s:Warning("Invalid line: ".line)
         endif
 
         if s:AlreadyExists(keys[0])
-            call s:Warn("Key already added: ".keys[0])
+            call s:Warning("Key already added: ".keys[0])
             continue
         endif
 
@@ -1046,7 +1138,7 @@ function! s:ParseFileAssociationList()
             " TODO: check for invalid filesystem characters.  this is probably
             " different for different systems.  Make sure the list is complete
             if match(p, "[/\\,;']") != -1
-                call s:Warn("Invalid pattern (".p.") in line(".lineCounter.")")
+                call s:Warning("Invalid pattern (".p.") in line(".lineCounter.")")
                 continue
             endif
 
@@ -1055,7 +1147,7 @@ function! s:ParseFileAssociationList()
                 \  || s:countstr(p, '>') > 1
                 \  || p[0] != '<'
                 \  || p[len(p)-1] != '>'  
-                    call s:Warn("Invalid link (".p.") in line(".lineCounter.")")
+                    call s:Warning("Invalid link (".p.") in line(".lineCounter.")")
                     continue
                 endif
             endif
@@ -1085,7 +1177,7 @@ function! s:CheckLinks()
         let j = 0
         for p in patterns
             if s:IsLink(p) && s:FindByKey(s:GetKeyFromLink(p)) == -1
-                call s:Warn("Key(".p.") links to a nonexistent key")
+                call s:Warning("Key(".p.") links to a nonexistent key")
                 call remove(patterns, j)
                 let j -= 1
             endif
@@ -1093,7 +1185,7 @@ function! s:CheckLinks()
         endfor
 
         if len(patterns) == 0
-            call s:Warn("Key(".s:Dict[i][0].") has no valid patterns or links")
+            call s:Warning("Key(".s:Dict[i][0].") has no valid patterns or links")
             call remove(s:Dict, i)
         else
             let s:Dict[i][1] = join(patterns)
@@ -1164,53 +1256,12 @@ endfunction
 function! <sid>GrepCurrentWord(add, whole)
     let currWord=expand("<cword>")
     if empty(currWord)
-        call s:Warn("No current word")
+        call s:Warning("No current word")
         return
     endif
     call s:DoGrep(currWord, a:add, a:whole, "")
 endfunction
 " }}}
-" ReplaceCurrentWord {{{
-"function! <sid>ReplaceCurrentWord(whole)
-    "let currWord=expand("<cword>")
-    "if empty(currWord)
-        "call s:Warn("No current word")
-        "return
-    "endif
-
-    "let r = input("Replace '".currWord."' with: ")
-    "if empty(r)
-        "return
-    "endif
-
-    "" TODO: this should return a value
-    "call s:DoGrep(currWord, "", a:whole)
-    "if !s:HasMatches()
-        "return
-    "endif
-    ""let qflist = getqflist()
-    ""if empty(qflist)
-        ""return
-    ""endif
-
-    "" TODO: parameterize the flags
-    "" TODO: improve this snippet
-    "" TODO: consider that this might save all of the files, making it hard to
-    "" undo the changes
-    " Note: the implementation of the functionality below was inspired by the
-    " vgrepsup plugin
-    "while 1
-        "silent exe 's/'.escape(currWord, '/').'/'.escape(r,'/').'/gc'
-        "try
-            "silent cnext
-        "catch
-            "if v:exception !~ 'E553:' | echoerr v:exception | endif
-            "break
-        "endtry
-    "endwhile
-
-"endfunction
-"}}}
 " GrepInput {{{
 function! s:GrepInput(word, add, bang, count)
     call s:DoGrep( a:word , a:add, a:bang == "!" ? 1 : 0, a:count>0 ? a:count : "")
@@ -1318,18 +1369,33 @@ function! s:DoGrep(word, add, whole, count)
 
     call s:BuildPatternList()
     if s:Dict[s:buffersChoicePos][2] == 1 && empty(s:FilesToGrep)
-        call s:Warn("No saved buffers to explore")
+        call s:Warning("No saved buffers to explore")
         return
     " Don't evaluate if in recursive mode, this will take too long
     elseif g:EasyGrepRecursive == 0 && !s:HasFilesThatMatch()
-        call s:Warn("No files match against ".s:FilesToGrep)
+        call s:Warning("No files match against ".s:FilesToGrep)
         return
     endif
     let win = g:EasyGrepWindow != 0 ? "l" : ""
 
-    " TODO: consider try-ing this and catching the error rather than having the
-    " check above
-    execute a:count.win.com.a:add." ".opts." ".s1.word.s2." ".s:FilesToGrep
+    " TODO: enumerate the error conditions of this call
+    try
+        silent execute a:count.win.com.a:add." ".opts." ".s1.word.s2." ".s:FilesToGrep
+    catch
+        if v:exception != 'E480'
+            call s:Warning("No Matches")
+            try
+                " go to the last error list on no matches
+                if g:EasyGrepWindow == 0
+                    silent colder
+                else
+                    silent lolder
+                endif
+            catch
+            endtry
+        endif
+        return 0
+    endtry
 
     if s:HasMatches()
         if g:EasyGrepOpenWindowOnMatch
@@ -1339,15 +1405,290 @@ function! s:DoGrep(word, add, whole, count)
                 lwindow
             endif
         endif
+    else
+        call s:Warning("No Matches")
+        return 0
     endif
+
+    return 1
 endfunction
 " }}}
+" ReplaceCurrentWord {{{
+function! <sid>ReplaceCurrentWord(whole)
+    let currWord=expand("<cword>")
+    if empty(currWord)
+        call s:Warning("No current word")
+        return
+    endif
+
+    let r = input("Replace '".currWord."' with: ")
+    if empty(r)
+        return
+    endif
+
+    call s:DoReplace(currWord, r, a:whole)
+endfunction
+"}}}
+" Replace {{{
+function! s:Replace(whole, ...)
+
+    if a:0 != 2
+        call s:Error("Invalid arguments; usage: Replace target replacement")
+        return
+    endif
+
+    call s:DoReplace(a:1, a:2, a:whole)
+endfunction
+"}}}
+" ReplaceUndo {{{
+function! s:ReplaceUndo(bang)
+    if !exists("s:actionList")
+        call s:Error("No saved actions to undo")
+        return
+    endif
+
+    " If s:savedSwitchbuf exists, that means the last command was interrupted;
+    " give it another shot
+    if !exists("s:savedSwitchbuf")
+        let s:savedSwitchbuf = &switchbuf
+
+        if g:EasyGrepNoTabs
+            set switchbuf=useopen,split
+        else
+            set switchbuf=useopen,usetab
+        endif
+    endif
+
+    if g:EasyGrepWindow == 0
+        call setqflist(s:LastErrorList)
+        cfirst
+    else
+        call setloclist(s:LastErrorList)
+        lfirst
+    endif
+
+    let bufList = s:GetBufferIdList()
+
+    let i = 0
+    let numItems = len(s:LastErrorList)
+    let lastFile = -1
+
+    let finished = 0
+    while !finished
+        try
+            while i < numItems
+                if s:actionList[i] == 1
+
+                    if !g:EasyGrepNoTabs
+                        let thisFile = s:LastErrorList[i].bufnr
+                        if thisFile != lastFile
+                            " only open a new tab when this window isn't already
+                            " open
+                            if index(bufList, thisFile) == -1
+                                tabnew
+                                if g:EasyGrepWindow == 0
+                                    copen
+                                else
+                                    lopen
+                                endif
+                            endif
+                        endif
+                        let lastFile = thisFile
+                    endif
+
+                    if g:EasyGrepWindow == 0
+                        execute "cc ".(i+1)
+                    else
+                        execute "ll ".(i+1)
+                    endif
+
+                    silent exe 's/'.s:LastReplacement.'/'.s:LastTarget.'/g'
+
+                    let s:actionList[i] = 0
+                endif
+
+                let i += 1
+            endwhile
+            let finished = 1
+        "catch /^Vim(\a\+):E36:/
+            "call s:Warning("Ran out of room for more windows")
+            "let finished = confirm("Do you want to save all windows and continue?", "&Yes\n&No")-1
+            "if finished == 1
+                "call s:Warning("To continue, save unsaved windows, make some room (try :only) and run ReplaceUndo again")
+                "return
+            "else
+                "wall
+                "only
+            "endif
+        catch /^Vim:Interrupt$/
+            call s:Warning("Undo interrupted by user; state is not guaranteed")
+            let finished = confirm("Are you sure you want to stop the undo?", "&Yes\n&No")-1
+            let finished = !finished
+        catch
+            echo v:exception
+            call s:Warning("Undo interrupted; state is not guaranteed")
+            let finished = confirm("Do you want to continue undoing?", "&Yes\n&No")-1
+        endtry
+    endwhile
+
+    if exists("s:savedSwitchbuf")
+        let &switchbuf = s:savedSwitchbuf
+        unlet s:savedSwitchbuf
+    endif
+
+    unlet s:actionList
+    unlet s:LastErrorList
+endfunction
+"}}}
+" DoReplace {{{
+function! s:DoReplace(target, replacement, whole)
+
+    let target = escape(a:target, '/')
+    if !s:DoGrep(target, "", a:whole, "")
+        return
+    endif
+
+    let replacement = escape(a:replacement, '/')
+
+    " TODO: is a deepcopy needed here?
+    let s:LastErrorList = deepcopy(s:GetErrorList())
+    let numMatches = len(s:LastErrorList)
+    let s:actionList = repeat([0], numMatches)
+
+    let s:LastTarget = a:target
+    let s:LastReplacement = a:replacement
+
+    if !exists("s:savedSwitchbuf")
+        if g:EasyGrepNoTabs
+            set switchbuf=useopen,split
+        else
+            set switchbuf=useopen,usetab
+        endif
+    endif
+
+    let opts = ""
+    if !g:EasyGrepEveryMatch
+        let opts .= "g"
+    endif
+
+    let bufList = s:GetBufferIdList()
+
+    " TODO: figure out how to get the cursor to the right when calling getchar()
+    " TODO: figure out how to get the pattern highlighted
+    let lastFile = -1
+    let doAll = 0
+    let i = 0
+    while i < numMatches
+        try
+            let pendingQuit = 0
+            let doit = 1
+
+            let thisFile = s:LastErrorList[i].bufnr
+            if thisFile != lastFile
+                if !g:EasyGrepNoTabs
+                    " only open a new tab when the window doesn't already exist
+                    if index(bufList, thisFile) == -1
+                        tabnew
+                        if g:EasyGrepWindow == 0
+                            copen
+                        else
+                            lopen
+                        endif
+                    endif
+                endif
+                if doAll && g:EasyGrepReplaceAllPerFile
+                    let doAll = 0
+                endif
+            endif
+            let lastFile = thisFile
+
+            if g:EasyGrepWindow == 0
+                execute "cc ".(i+1)
+            else
+                execute "ll ".(i+1)
+            endif
+
+            if !doAll
+
+                " this highlights the match; couldn't figure out a cleaner way to do
+                " it
+                silent exe "s/".target."//n"
+
+                redraw
+                echohl Type | echo "replace with ".a:replacement." (y/n/a/q/l/^E/^Y)?"| echohl None
+                let ret = getchar()
+
+                if ret == 5
+                    " FIXME: the normal command doesn't work
+                    normal "\<c-e>"
+                    continue
+                elseif ret == 25
+                    normal "\<c-y>"
+                    continue
+                else
+                    let ret = nr2char(ret)
+
+                    if ret == '<cr>'
+                        continue
+                    elseif ret == 'y'
+                        " doit
+                    elseif ret == 'n'
+                        let doit = 0
+                    elseif ret == 'a'
+                        " doit
+                        let doAll = 1
+                    elseif ret == 'q'
+                        break
+                    elseif ret == 'l'
+                        let pendingQuit = 1
+                    else
+                        continue
+                    endif
+                endif
+            endif
+
+            if doit
+                exe 's/'.target.'/'.replacement.'/'.opts
+                let s:actionList[i] = doit
+            endif
+
+            if pendingQuit
+                break
+            endif
+
+            let i += 1
+
+        catch /^Vim(\a\+):E36:/
+            call s:Warning("Ran out of room for more windows")
+            let finished = confirm("Do you want to save all windows and continue?", "&Yes\n&No")-1
+            if finished == 1
+                call s:Warning("To continue, save unsaved windows, make some room (try :only) and run Replace again")
+                return
+            else
+                wall
+                only
+            endif
+        catch
+            break
+        endtry
+    endwhile
+
+
+    if exists("s:savedSwitchbuf")
+        let &switchbuf = s:savedSwitchbuf
+        unlet s:savedSwitchbuf
+    endif
+endfunction
+"}}}
 " }}}
 
 " Commands {{{
 command! -count -bang -nargs=1 Grep :call s:GrepInput( <f-args> , "", "<bang>", "<count>")
 command! -count -bang -nargs=1 GrepAdd :call s:GrepInput( <f-args>, "add", "<bang>", "<count>")
 command! -nargs=? GrepOptions :call <sid>GrepOptions( <f-args> )
+
+command! -bang -nargs=+ Replace :call s:Replace("<bang>", <f-args>)
+command! -bang ReplaceUndo :call s:ReplaceUndo("<bang>")
 "}}}
 " Keymaps {{{
 if !hasmapto("<plug>EgMapGrepOptions")
@@ -1365,20 +1706,20 @@ endif
 if !hasmapto("<plug>EgMapGrepCurrentWordA")
     map <silent> <Leader>vA <plug>EgMapGrepCurrentWordA
 endif
-"if !hasmapto("<plug>EgMapReplaceCurrentWord")
-    "map <silent> <Leader>vr <plug>EgMapReplaceCurrentWordr
-"endif
-"if !hasmapto("<plug>EgMapReplaceCurrentWord")
-    "map <silent> <Leader>vR <plug>EgMapReplaceCurrentWordR
-"endif
+if !hasmapto("<plug>EgMapReplaceCurrentWordr")
+    map <silent> <Leader>vr <plug>EgMapReplaceCurrentWordr
+endif
+if !hasmapto("<plug>EgMapReplaceCurrentWordR")
+    map <silent> <Leader>vR <plug>EgMapReplaceCurrentWordR
+endif
 
 nmap <silent> <unique> <script> <plug>EgMapGrepOptions      :call <sid>GrepOptions()<CR>
 nmap <silent> <unique> <script> <plug>EgMapGrepCurrentWordv :call <sid>GrepCurrentWord("", 0)<CR>
 nmap <silent> <unique> <script> <plug>EgMapGrepCurrentWordV :call <sid>GrepCurrentWord("", 1)<CR>
 nmap <silent> <unique> <script> <plug>EgMapGrepCurrentWorda :call <sid>GrepCurrentWord("add", 0)<CR>
 nmap <silent> <unique> <script> <plug>EgMapGrepCurrentWordA :call <sid>GrepCurrentWord("add", 1)<CR>
-"nmap <silent> <unique> <script> <plug>EgMapReplaceCurrentWordr :call <sid>ReplaceCurrentWord(0)<CR>
-"nmap <silent> <unique> <script> <plug>EgMapReplaceCurrentWordR :call <sid>ReplaceCurrentWord(1)<CR>
+nmap <silent> <unique> <script> <plug>EgMapReplaceCurrentWordr :call <sid>ReplaceCurrentWord(0)<CR>
+nmap <silent> <unique> <script> <plug>EgMapReplaceCurrentWordR :call <sid>ReplaceCurrentWord(1)<CR>
 
 if !g:EasyGrepNoDirectMappings
     call s:CreateDirectMappings()
