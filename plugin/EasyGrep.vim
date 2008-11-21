@@ -11,7 +11,12 @@
 "
 " Version:      See g:EasyGrepVersion for version number.
 " History:     
-"   0.3 Added experimental :Replace and :ReplaceUndo commands; keymapped <leader>vr for :Replace
+"   0.4 Improved Replace and ReplaceUndo
+"       Added two configurable modes for how the windows operate when doing a
+"       global replace.
+"       Fixed an issue with linked filetypes.
+"   0.3 Added experimental :Replace and :ReplaceUndo commands; keymapped 
+"       <leader>vr for :Replace
 "       Improved response when no matches
 "   0.2 Added option to toggle showing fewer or more options; showing fewer
 "       options by default.
@@ -124,33 +129,43 @@
 "    "g:EasyGrepNoDirectMappings" - Specifies that a set of mappings be
 "    generated that allow options to be set without the options explorer window
 "
-"    "g:EasyGrepReplaceAllPerFile" - Specifies that selecting 'a' will apply the
-"    replacements on a per file basis, as opposed to globally as is the default
+"    "g:EasyGrepReplaceWindowMode" - Specifies the mode that the script will use
+"    when a buffer needs to be changed while performing a global replace.
+"    0 - Open a new tab for each window
+"    1 - Perform a split of the current window with the next window
+"    2 - autowriteall; create no new windows
 "
-
-" TODO: eliminate the problem where starting at a cpp file and going to a c file
-"       no longer searches in cpp
-" TODO: consider that location list shouldn't work across files and the way I've
-"       implemented it probably won't work
-" TODO: experiment with tabdo/bufdo undo in ReplaceUndo instead of currently
-"       implemented substitute; consider though that each window may have a different
-"       number of replacements per file
+"    Note: Option 1 has the possibility of running out of vertical space to
+"    split more windows.  Actions are taken to make this a non-issue, but this
+"    option can often be more clunky than other options.
+"    Note: As a result of the limitation above, option 0 is the only mode that
+"    won't require saving the files during a replace
+"
+"    "g:EasyGrepReplaceAllPerFile" - Specifies that selecting 'a' (for all) will
+"    apply the replacements on a per file basis, as opposed to globally as is
+"    the default.
 
 " Idea: allow entries in the file associations list to be regular expressions
 " Idea: include special paths like $INCLUDE in the mix
 " Idea: set file/directory exclusions
 " Idea: warn when grepping from a directory that is not the directory in which
-" the source file lies
-" Idea: regex search and replace
+"       the source file lies
+" Idea: make sure that regex search and replace works as expected
 " Idea: create a replace option that is similar to GrepOptions?
-" Idea: provide three modes for global replace: split, tabs, autowriteall
+" Idea: remove location list options?
+" Idea: experiment with undo in ReplaceUndo instead of currently
+"       implemented substitute; this is challenging though as the user may make
+"       changes in between a call to Replace and ReplaceUndo
+"
+" TODO: increase the granularity of the match so that you can individually
+"       decide per line
 
 "
 " Initialization {{{
 if exists("g:EasyGrepVersion") || &cp || !has("quickfix")
     finish
 endif
-let g:EasyGrepVersion = "0.3"
+let g:EasyGrepVersion = "0.4"
 " Check for Vim version 700 or greater {{{
 if v:version < 700
   echo "Sorry, EasyGrep ".g:EasyGrepVersion."\nONLY runs with Vim 7.0 and greater."
@@ -172,6 +187,30 @@ function! s:countstr(str, ele)
     endwhile
 
     return c
+endfunction
+"}}}
+" unique {{{
+function! s:unique(lst)
+    if empty(a:lst)
+        return a:lst
+    endif
+
+    let lst = a:lst
+    call sort(lst)
+
+    let end = len(lst)
+    let i = 1
+    let lastSeen = lst[0]
+    while i < end
+        if lst[i] == lastSeen
+            call remove(lst, i)
+            let end -= 1
+        else
+            let i += 1
+        endif
+    endwhile
+
+    return lst
 endfunction
 "}}}
 " BackToForwardSlash {{{
@@ -228,6 +267,16 @@ function! s:GetBufferNamesList()
     endfor
 
     return bufNames
+endfunction
+" }}}
+" GetVisibleBuffers {{{
+function! s:GetVisibleBuffers()
+    let tablist = []
+    for i in range(tabpagenr('$'))
+       call extend(tablist, tabpagebuflist(i + 1))
+    endfor
+    let tablist = s:unique(tablist)
+    return tablist
 endfunction
 " }}}
 " OnOrOff {{{
@@ -329,12 +378,17 @@ if !exists("g:EasyGrepNoDirectMappings")
     let g:EasyGrepNoDirectMappings=0
 endif
 
-if !exists("g:EasyGrepReplaceAllPerFile")
-    let g:EasyGrepReplaceAllPerFile=0
+if !exists("g:EasyGrepReplaceWindowMode")
+    let g:EasyGrepReplaceWindowMode=0
+else
+    if g:EasyGrepReplaceWindowMode > 2
+        call s:Error("Invalid value for g:EasyGrepReplaceWindowMode")
+        let g:EasyGrepReplaceWindowMode = 0
+    endif
 endif
 
-if !exists("g:EasyGrepNoTabs")
-    let g:EasyGrepNoTabs=0
+if !exists("g:EasyGrepReplaceAllPerFile")
+    let g:EasyGrepReplaceAllPerFile=0
 endif
 
 "}}}
@@ -469,7 +523,9 @@ function! <sid>EchoOptionsSet()
             \ "g:EasyGrepJumpToMatch",
             \ "g:EasyGrepInvertWholeWord",
             \ "g:EasyGrepFileAssociationsInExplorer",
-            \ "g:EasyGrepNoDirectMappings" 
+            \ "g:EasyGrepNoDirectMappings",
+            \ "g:EasyGrepReplaceWindowMode",
+            \ "g:EasyGrepReplaceAllPerFile" 
             \ ]
 
     let str = ""
@@ -1018,7 +1074,7 @@ function! s:GetErrorList()
     if g:EasyGrepWindow == 0
         return getqflist()
     else
-        return getloclist()
+        return getloclist(0)
     endif
 endfunction
 "}}}
@@ -1201,7 +1257,23 @@ function! s:SetCurrentExtension()
     endif
     let ext = fnamemodify(bufname("%"), ":e")
     if !empty(ext)
-        let s:TrackedExt = "*.".ext
+        let temp = "*.".ext
+        if s:Dict[s:buffersChoicePos][2] == 1
+            let s:TrackedExt = temp
+            " Note: this has a very, very, very, small issue (is it even an
+            " issue?) where if you're working with C++ files, and you switch to
+            " buffers mode, and then edit a file of another type, like .c (which
+            " should be in the C++ list), and then switch back to tracked mode,
+            " you will lose the C++ association and have to go back to a C++
+            " file before being able to search them.
+            " This is so small of an issue that it's almost a non-issue, so I'm
+            " not going to bother fixing it
+        else
+            let tempList = split(s:FilesToGrep)
+            if index(tempList, temp) == -1
+                let s:TrackedExt = temp
+            endif
+        endif
     endif
 endfunction
 "}}}
@@ -1449,13 +1521,19 @@ function! s:ReplaceUndo(bang)
 
     " If s:savedSwitchbuf exists, that means the last command was interrupted;
     " give it another shot
-    if !exists("s:savedSwitchbuf")
-        let s:savedSwitchbuf = &switchbuf
+    if !exists("s:savedSwitchbuf") && !exists("s:savedAutowriteall")
 
-        if g:EasyGrepNoTabs
-            set switchbuf=useopen,split
+        let s:savedSwitchbuf = &switchbuf
+        set switchbuf=useopen
+        if g:EasyGrepReplaceWindowMode == 2
+            let s:savedAutowriteall = &autowriteall
+            set autowriteall
         else
-            set switchbuf=useopen,usetab
+            if g:EasyGrepReplaceWindowMode == 0
+                set switchbuf+=usetab
+            else
+                set switchbuf+=split
+            endif
         endif
     endif
 
@@ -1463,11 +1541,11 @@ function! s:ReplaceUndo(bang)
         call setqflist(s:LastErrorList)
         cfirst
     else
-        call setloclist(s:LastErrorList)
+        call setloclist(0,s:LastErrorList)
         lfirst
     endif
 
-    let bufList = s:GetBufferIdList()
+    let bufList = s:GetVisibleBuffers()
 
     let i = 0
     let numItems = len(s:LastErrorList)
@@ -1479,7 +1557,7 @@ function! s:ReplaceUndo(bang)
             while i < numItems
                 if s:actionList[i] == 1
 
-                    if !g:EasyGrepNoTabs
+                    if g:EasyGrepReplaceWindowMode == 0
                         let thisFile = s:LastErrorList[i].bufnr
                         if thisFile != lastFile
                             " only open a new tab when this window isn't already
@@ -1510,16 +1588,16 @@ function! s:ReplaceUndo(bang)
                 let i += 1
             endwhile
             let finished = 1
-        "catch /^Vim(\a\+):E36:/
-            "call s:Warning("Ran out of room for more windows")
-            "let finished = confirm("Do you want to save all windows and continue?", "&Yes\n&No")-1
-            "if finished == 1
-                "call s:Warning("To continue, save unsaved windows, make some room (try :only) and run ReplaceUndo again")
-                "return
-            "else
-                "wall
-                "only
-            "endif
+        catch /^Vim(\a\+):E36:/
+            call s:Warning("Ran out of room for more windows")
+            let finished = confirm("Do you want to save all windows and continue?", "&Yes\n&No")-1
+            if finished == 1
+                call s:Warning("To continue, save unsaved windows, make some room (try :only) and run ReplaceUndo again")
+                return
+            else
+                wall
+                only
+            endif
         catch /^Vim:Interrupt$/
             call s:Warning("Undo interrupted by user; state is not guaranteed")
             let finished = confirm("Are you sure you want to stop the undo?", "&Yes\n&No")-1
@@ -1534,6 +1612,11 @@ function! s:ReplaceUndo(bang)
     if exists("s:savedSwitchbuf")
         let &switchbuf = s:savedSwitchbuf
         unlet s:savedSwitchbuf
+    endif
+
+    if exists("s:savedAutowriteall")
+        let &autowriteall = s:savedAutowriteall
+        unlet s:savedAutowriteall
     endif
 
     unlet s:actionList
@@ -1558,11 +1641,17 @@ function! s:DoReplace(target, replacement, whole)
     let s:LastTarget = a:target
     let s:LastReplacement = a:replacement
 
-    if !exists("s:savedSwitchbuf")
-        if g:EasyGrepNoTabs
-            set switchbuf=useopen,split
+
+    let s:savedSwitchbuf = &switchbuf
+    set switchbuf=useopen
+    if g:EasyGrepReplaceWindowMode == 2
+        let s:savedAutowriteall = &autowriteall
+        set autowriteall
+    else
+        if g:EasyGrepReplaceWindowMode == 0
+            set switchbuf+=usetab
         else
-            set switchbuf=useopen,usetab
+            set switchbuf+=split
         endif
     endif
 
@@ -1571,21 +1660,25 @@ function! s:DoReplace(target, replacement, whole)
         let opts .= "g"
     endif
 
-    let bufList = s:GetBufferIdList()
+    let bufList = s:GetVisibleBuffers()
 
-    " TODO: figure out how to get the cursor to the right when calling getchar()
-    " TODO: figure out how to get the pattern highlighted
+    " this highlights the match; it seems to be a simpler solution
+    " than matchadd()
+    silent exe "s/".target."//n"
+
+    " TODO: figure out how to get the individual target at each step highlighted
+    let finished = 0
     let lastFile = -1
     let doAll = 0
     let i = 0
-    while i < numMatches
+    while i < numMatches && !finished
         try
             let pendingQuit = 0
             let doit = 1
 
             let thisFile = s:LastErrorList[i].bufnr
             if thisFile != lastFile
-                if !g:EasyGrepNoTabs
+                if g:EasyGrepReplaceWindowMode == 0
                     " only open a new tab when the window doesn't already exist
                     if index(bufList, thisFile) == -1
                         tabnew
@@ -1609,10 +1702,6 @@ function! s:DoReplace(target, replacement, whole)
             endif
 
             if !doAll
-
-                " this highlights the match; couldn't figure out a cleaner way to do
-                " it
-                silent exe "s/".target."//n"
 
                 redraw
                 echohl Type | echo "replace with ".a:replacement." (y/n/a/q/l/^E/^Y)?"| echohl None
@@ -1663,13 +1752,18 @@ function! s:DoReplace(target, replacement, whole)
             let finished = confirm("Do you want to save all windows and continue?", "&Yes\n&No")-1
             if finished == 1
                 call s:Warning("To continue, save unsaved windows, make some room (try :only) and run Replace again")
-                return
             else
                 wall
                 only
             endif
+        catch /^Vim:Interrupt$/
+            call s:Warning("Replace interrupted by user")
+            let finished = confirm("Are you sure you want to stop the replace?", "&Yes\n&No")-1
+            let finished = !finished
         catch
-            break
+            echo v:exception
+            call s:Warning("Replace interrupted")
+            let finished = confirm("Do you want to continue replace?", "&Yes\n&No")-1
         endtry
     endwhile
 
@@ -1677,6 +1771,11 @@ function! s:DoReplace(target, replacement, whole)
     if exists("s:savedSwitchbuf")
         let &switchbuf = s:savedSwitchbuf
         unlet s:savedSwitchbuf
+    endif
+
+    if exists("s:savedAutowriteall")
+        let &autowriteall = s:savedAutowriteall
+        unlet s:savedAutowriteall
     endif
 endfunction
 "}}}
