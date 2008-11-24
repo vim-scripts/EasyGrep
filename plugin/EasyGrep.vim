@@ -11,6 +11,12 @@
 "
 " Version:      See g:EasyGrepVersion for version number.
 " History:     
+"   0.5 Fixed an issue with tracking the file extension where sometimes the
+"       desired extension wouldn't be registered.
+"       Better reporting when no files match.
+"       Now warning when searching from a working directory that doesn't match
+"       the current files directory.
+"       Added g:EasyGrepExtraWarnings option.
 "   0.4 Improved Replace and ReplaceUndo
 "       Added two configurable modes for how the windows operate when doing a
 "       global replace.
@@ -144,12 +150,13 @@
 "    "g:EasyGrepReplaceAllPerFile" - Specifies that selecting 'a' (for all) will
 "    apply the replacements on a per file basis, as opposed to globally as is
 "    the default.
+"
+"    "g:EasyGrepExtraWarnings" - Specifies that warnings be issued for 
+"    conditions that may be valid but confuse some users.
 
 " Idea: allow entries in the file associations list to be regular expressions
 " Idea: include special paths like $INCLUDE in the mix
 " Idea: set file/directory exclusions
-" Idea: warn when grepping from a directory that is not the directory in which
-"       the source file lies
 " Idea: make sure that regex search and replace works as expected
 " Idea: create a replace option that is similar to GrepOptions?
 " Idea: remove location list options?
@@ -165,7 +172,7 @@
 if exists("g:EasyGrepVersion") || &cp || !has("quickfix")
     finish
 endif
-let g:EasyGrepVersion = "0.4"
+let g:EasyGrepVersion = "0.5"
 " Check for Vim version 700 or greater {{{
 if v:version < 700
   echo "Sorry, EasyGrep ".g:EasyGrepVersion."\nONLY runs with Vim 7.0 and greater."
@@ -389,6 +396,10 @@ endif
 
 if !exists("g:EasyGrepReplaceAllPerFile")
     let g:EasyGrepReplaceAllPerFile=0
+endif
+
+if !exists("g:EasyGrepExtraWarnings")
+    let g:EasyGrepExtraWarnings=1
 endif
 
 "}}}
@@ -1282,21 +1293,8 @@ function! s:SetWatchExtension()
     call s:CreateDict()
     augroup EasyGrepAutocommands
         au!
-        autocmd BufWinEnter * call s:SetCurrentExtension()
+        autocmd BufEnter * call s:SetCurrentExtension()
     augroup END
-    " Note: the autocmd is necessary to best track the users intentions.  The
-    " reason for this is that the user could do a search from a file without an
-    " extension and then the best case is to simply use the last extension
-    " tracked.  If that last extension, however, were to be picked up from the
-    " last search, then situations could arise where confusing behavior is
-    " encountered.
-    "
-    " e.g. User searches from a .txt file; .txt is registered.  User navigates
-    " to a .sh file.  The user then issues a search (by keyed command or
-    " explicit command) from the quickfix window, expecting .sh files to be
-    " searched, but because the search was not invoked from a file/buffer
-    " without an extension, the last tracked extension is used, which is a .txt,
-    " and against the expectation that it be a .sh file.
 endfunction
 call s:SetWatchExtension()
 "}}}
@@ -1439,15 +1437,31 @@ function! s:DoGrep(word, add, whole, count)
         endif
     endif
 
+
     call s:BuildPatternList()
-    if s:Dict[s:buffersChoicePos][2] == 1 && empty(s:FilesToGrep)
-        call s:Warning("No saved buffers to explore")
-        return
-    " Don't evaluate if in recursive mode, this will take too long
-    elseif g:EasyGrepRecursive == 0 && !s:HasFilesThatMatch()
-        call s:Warning("No files match against ".s:FilesToGrep)
-        return
+
+    if g:EasyGrepExtraWarnings
+        if s:Dict[s:buffersChoicePos][2] == 1 && empty(s:FilesToGrep)
+            call s:Warning("No saved buffers to explore")
+            return
+
+        if !g:EasyGrepRecursive
+            let fileDir = fnamemodify(bufname("."), ":p:h")
+            if !empty(fileDir)
+                let cwd = getcwd()
+                if fileDir != cwd
+                    call s:Warning("Warning: working directory [".cwd."] doesn't match the current file's directory [".fileDir."]")
+                endif
+            endif
+
+            " Don't evaluate if in recursive mode, this will take too long
+            if !s:HasFilesThatMatch()
+                call s:Warning("No files match against ".s:FilesToGrep)
+                return
+            endif
+        endif
     endif
+
     let win = g:EasyGrepWindow != 0 ? "l" : ""
 
     " TODO: enumerate the error conditions of this call
@@ -1455,7 +1469,7 @@ function! s:DoGrep(word, add, whole, count)
         silent execute a:count.win.com.a:add." ".opts." ".s1.word.s2." ".s:FilesToGrep
     catch
         if v:exception != 'E480'
-            call s:Warning("No Matches")
+            call s:WarnNoMatches(a:word)
             try
                 " go to the last error list on no matches
                 if g:EasyGrepWindow == 0
@@ -1478,11 +1492,27 @@ function! s:DoGrep(word, add, whole, count)
             endif
         endif
     else
-        call s:Warning("No Matches")
+        call s:Error("This case should be caught by catch of E480 above")
         return 0
     endif
 
     return 1
+endfunction
+" }}}
+" GetSearchPatternFriendlyName {{{
+function! s:GetSearchPatternFriendlyName()
+    if s:Dict[s:buffersChoicePos][2] == 1
+        return "*Buffers*"
+    else
+        return s:FilesToGrep
+    endif
+endfunction
+" }}}
+" WarnNoMatches {{{
+function! s:WarnNoMatches(pattern)
+    let str = "No matches for '".a:pattern."' in "
+    let str .= s:GetSearchPatternFriendlyName()
+    call s:Warning(str)
 endfunction
 " }}}
 " ReplaceCurrentWord {{{
