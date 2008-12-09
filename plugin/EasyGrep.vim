@@ -11,11 +11,16 @@
 "
 " Version:      See g:EasyGrepVersion for version number.
 " History:     
+"   0.6 Fixed paths with spaces in them
+"       Folds will now be disabled where replacements are to be made
+"       Fixed an error with checking for extra warnings
+"       Better highlighting while replacing
+"       Recursive mode can no longer be activated when Buffers mode is activated
 "   0.5 Fixed an issue with tracking the file extension where sometimes the
 "       desired extension wouldn't be registered.
 "       Better reporting when no files match.
 "       Now warning when searching from a working directory that doesn't match
-"       the current files directory.
+"       the current file's directory.
 "       Added g:EasyGrepExtraWarnings option.
 "   0.4 Improved Replace and ReplaceUndo
 "       Added two configurable modes for how the windows operate when doing a
@@ -49,6 +54,11 @@
 "    controlled by:
 "
 "    <Leader>vo  - Select the files to search in and set grep options
+"
+"    For each of the options presented in this window, there is a mapping that
+"    allows a direct change of this option.  The pattern is <Leader>vy* , where
+"    star is the value listed in the options window for each of the options.
+"    See g:EasyGrepNoDirectMappings to turn this off.
 "
 "    Note: These keymappings may be remapped to your liking; see the end of the
 "    file for the associated plugin mappings
@@ -154,6 +164,7 @@
 "    "g:EasyGrepExtraWarnings" - Specifies that warnings be issued for 
 "    conditions that may be valid but confuse some users.
 
+" Idea: provide an option for case searching that is independent of ignorecase
 " Idea: allow entries in the file associations list to be regular expressions
 " Idea: include special paths like $INCLUDE in the mix
 " Idea: set file/directory exclusions
@@ -166,6 +177,8 @@
 "
 " TODO: increase the granularity of the match so that you can individually
 "       decide per line
+" FIXME: cursorline doesn't always follow to the line at which the replacement
+" is going to happen
 
 "
 " Initialization {{{
@@ -286,6 +299,28 @@ function! s:GetVisibleBuffers()
     return tablist
 endfunction
 " }}}
+" EscapeList {{{
+function! s:FileEscape(item)
+    return escape(a:item, ' \')
+endfunction
+function! s:ShellEscape(item)
+    return shellescape(a:item, 1)
+endfunction
+function! s:DoEscapeList(lst, seperator, func)
+    let escapedList = []
+    for item in a:lst
+        let e = a:func(item).a:seperator
+        call add(escapedList, e)
+    endfor
+    return escapedList
+endfunction
+function! s:EscapeList(lst, seperator)
+    return s:DoEscapeList(a:lst, a:seperator, function("s:FileEscape"))
+endfunction
+function! s:ShellEscapeList(lst, seperator)
+    return s:DoEscapeList(a:lst, a:seperator, function("s:ShellEscape"))
+endfunction
+"}}}
 " OnOrOff {{{
 function! s:OnOrOff(num)
     return a:num == 0 ? 'off' : 'on'
@@ -490,10 +525,10 @@ endfunction
 " Options Explorer Mapped Functions {{{
 " EchoFilesSearched {{{
 function! <sid>EchoFilesSearched()
-    call s:BuildPatternList()
+    call s:BuildPatternList("\n")
 
     if s:Dict[s:buffersChoicePos][2] == 1
-        let str = join(split(s:FilesToGrep), "\n")
+        let str = s:FilesToGrep
     else
         let str = ""
         let patternList = split(s:FilesToGrep)
@@ -717,6 +752,11 @@ endfunction
 " }}}
 " ToggleRecursion {{{
 function! <sid>ToggleRecursion()
+    if s:Dict[s:buffersChoicePos][2] == 1
+        call s:Warning("Recursive mode cant' be set when *Buffers* is activated")
+        return
+    endif
+
     let g:EasyGrepRecursive = !g:EasyGrepRecursive
 
     call s:BuildPatternList()
@@ -939,9 +979,15 @@ function! s:DoBreakDown(key)
 endfunction
 "}}}
 " BuildPatternList {{{
-function! s:BuildPatternList()
+function! s:BuildPatternList(...)
+    if a:0 > 0
+        let sp = a:1
+    else
+        let sp = " "
+    endif
+
     if s:Dict[s:buffersChoicePos][2] == 1
-        let s:FilesToGrep = join(s:GetBufferNamesList())
+        let s:FilesToGrep = join(s:EscapeList(s:GetBufferNamesList(), " "), sp)
     elseif s:Dict[s:trackChoicePos][2] == 1
 
         let str = s:TrackedExt
@@ -951,7 +997,7 @@ function! s:BuildPatternList()
             let str = s:BreakDown(keyList)
         endif
 
-        let s:FilesToGrep = s:PostCreate(str)
+        let s:FilesToGrep = s:PostCreate(str, sp)
     else
         let i = 0
         let numItems = len(s:Dict)
@@ -969,13 +1015,13 @@ function! s:BuildPatternList()
             echoerr "Inconsistency in EasyGrep script"
             let str = "*"
         endif
-        let s:FilesToGrep = s:PostCreate(str)
+        let s:FilesToGrep = s:PostCreate(str, sp)
     endif
     let s:FilesToGrep = s:Trim(s:FilesToGrep)
 endfunction
 " }}}
 " PostCreate {{{
-function! s:PostCreate(str)
+function! s:PostCreate(str, sp)
     if empty(a:str)
         return a:str
     endif
@@ -1002,7 +1048,7 @@ function! s:PostCreate(str)
         if g:EasyGrepRecursive && s:CommandChoice == 0
             let str .= "**/"
         endif
-        let str .= item." "
+        let str .= item.a:sp
     endfor
 
     return str
@@ -1063,15 +1109,21 @@ endfunction
 " }}}
 " HasFilesThatMatch{{{
 function! s:HasFilesThatMatch()
-    let patternList = split(s:FilesToGrep)
+    let saveFilesToGrep = s:FilesToGrep
+
+    call s:BuildPatternList("\n")
+    let patternList = split(s:FilesToGrep, '\n')
     for p in patternList
         let fileList = split(glob(p), '\n')
         for f in fileList
             if filereadable(f)
+                let s:FilesToGrep = saveFilesToGrep
                 return 1
             endif
         endfor
     endfor
+
+    let s:FilesToGrep = saveFilesToGrep
     return 0
 endfunction
 "}}}
@@ -1444,13 +1496,16 @@ function! s:DoGrep(word, add, whole, count)
         if s:Dict[s:buffersChoicePos][2] == 1 && empty(s:FilesToGrep)
             call s:Warning("No saved buffers to explore")
             return
+        endif
 
         if !g:EasyGrepRecursive
-            let fileDir = fnamemodify(bufname("."), ":p:h")
-            if !empty(fileDir)
-                let cwd = getcwd()
-                if fileDir != cwd
-                    call s:Warning("Warning: working directory [".cwd."] doesn't match the current file's directory [".fileDir."]")
+            if s:Dict[s:buffersChoicePos][2] != 1
+                let fileDir = fnamemodify(bufname("."), ":p:h")
+                if !empty(fileDir)
+                    let cwd = getcwd()
+                    if fileDir != cwd
+                        call s:Warning("Warning: working directory [".cwd."] doesn't match the current file's directory [".fileDir."]")
+                    endif
                 endif
             endif
 
@@ -1479,6 +1534,8 @@ function! s:DoGrep(word, add, whole, count)
                 endif
             catch
             endtry
+        else
+            call s:Error("FIXME: exception not caught ".v:exception)
         endif
         return 0
     endtry
@@ -1486,13 +1543,14 @@ function! s:DoGrep(word, add, whole, count)
     if s:HasMatches()
         if g:EasyGrepOpenWindowOnMatch
             if g:EasyGrepWindow == 0
-                cwindow
+                copen
             else
-                lwindow
+                lopen
             endif
+            setlocal nofoldenable
         endif
     else
-        call s:Error("This case should be caught by catch of E480 above")
+        call s:WarnNoMatches(a:word)
         return 0
     endif
 
@@ -1599,6 +1657,7 @@ function! s:ReplaceUndo(bang)
                                 else
                                     lopen
                                 endif
+                                setlocal nofoldenable
                             endif
                         endif
                         let lastFile = thisFile
@@ -1694,7 +1753,15 @@ function! s:DoReplace(target, replacement, whole)
 
     " this highlights the match; it seems to be a simpler solution
     " than matchadd()
-    silent exe "s/".target."//n"
+    if g:EasyGrepWindow == 0
+        cfirst
+    else
+        lfirst
+    endif
+    silent exe "s/".target."\\c//n"
+
+    let s:savedCursorLine = &cursorline
+    set cursorline
 
     " TODO: figure out how to get the individual target at each step highlighted
     let finished = 0
@@ -1717,18 +1784,27 @@ function! s:DoReplace(target, replacement, whole)
                         else
                             lopen
                         endif
+                        setlocal nofoldenable
                     endif
                 endif
                 if doAll && g:EasyGrepReplaceAllPerFile
                     let doAll = 0
                 endif
             endif
-            let lastFile = thisFile
 
             if g:EasyGrepWindow == 0
                 execute "cc ".(i+1)
             else
                 execute "ll ".(i+1)
+            endif
+
+            if thisFile != lastFile
+                set cursorline
+            endif
+            let lastFile = thisFile
+
+            if foldclosed(".") != -1
+                foldopen!
             endif
 
             if !doAll
@@ -1806,6 +1882,11 @@ function! s:DoReplace(target, replacement, whole)
     if exists("s:savedAutowriteall")
         let &autowriteall = s:savedAutowriteall
         unlet s:savedAutowriteall
+    endif
+
+    if exists("s:savedCursorLine")
+        tabdo let &cursorline = s:savedCursorLine
+        unlet s:savedCursorLine
     endif
 endfunction
 "}}}
