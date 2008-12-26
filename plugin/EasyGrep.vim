@@ -11,6 +11,10 @@
 "
 " Version:      See g:EasyGrepVersion for version number.
 " History:     
+"   0.7 Expanded search of EasyGrepFileAssociations list to every component of
+"       'runtimepath'.  This solves a starting message for those who placed
+"       EasyGrepFileAssociations in a location other than the first location in
+"       'runtimepath'.
 "   0.6 Fixed paths with spaces in them
 "       Folds will now be disabled where replacements are to be made
 "       Fixed an error with checking for extra warnings
@@ -405,11 +409,6 @@ endif
 
 if !exists("g:EasyGrepInvertWholeWord")
     let g:EasyGrepInvertWholeWord=0
-endif
-
-if !exists("g:EasyGrepFileAssociations")
-    let VimfilesDir=s:BackToForwardSlash(get(split(&runtimepath, ','), 0, "noinit"))
-    let g:EasyGrepFileAssociations=VimfilesDir."/plugin/EasyGrepFileAssociations"
 endif
 
 if !exists("g:EasyGrepFileAssociationsInExplorer")
@@ -1207,17 +1206,40 @@ function! s:CreateDict()
 
 endfunction
 " }}}
+" GetAssociationFileList {{{
+function! s:GetFileAssociationList()
+    if exists("g:EasyGrepFileAssociations")
+        return g:EasyGrepFileAssociations
+    endif
+
+    let VimfilesDirs=split(&runtimepath, ',')
+    for v in VimfilesDirs
+        let f = s:BackToForwardSlash(v)."/plugin/EasyGrepFileAssociations"
+        if filereadable(f)
+            let g:EasyGrepFileAssociations=f
+            return f
+        endif
+    endfor
+
+    call s:Error("Grep Pattern file list can't be read")
+    let g:EasyGrepFileAssociations=""
+    return ""
+endfunction
+" }}}
 " ParseFileAssociationList {{{
 function! s:ParseFileAssociationList()
-    if empty(g:EasyGrepFileAssociations)
+    let lst = s:GetFileAssociationList()
+
+    if empty(lst)
         return
     endif
-    if !filereadable(g:EasyGrepFileAssociations)
+
+    if !filereadable(lst)
         call s:Error("Grep Pattern file list can't be read")
         return
     endif
 
-    let fileList = readfile(g:EasyGrepFileAssociations)
+    let fileList = readfile(lst)
     if empty(fileList)
         call s:Error("Grep Pattern file list is empty")
         return
