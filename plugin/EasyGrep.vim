@@ -11,6 +11,9 @@
 "
 " Version:      See g:EasyGrepVersion for version number.
 " History:     
+"   0.8 Implemented case sensitivity that is independent of ignorecase, thanks
+"       to Doro Wu for contributing to this functionality
+"       Changed shortcut key for hidden files from 'i' to 'h'
 "   0.7 Expanded search of EasyGrepFileAssociations list to every component of
 "       'runtimepath'.  This solves a starting message for those who placed
 "       EasyGrepFileAssociations in a location other than the first location in
@@ -114,6 +117,9 @@
 "    "g:EasyGrepRecursive" - Specifies that recursive search be activated
 "    on start
 "
+"    "g:EasyGrepIgnoreCase" - Specifies the case sensitivity of searches.  Note
+"    that this can be further overrided for vimgrep searches with \c and \C
+"
 "    "g:EasyGrepHidden" - Specifies that hidden files search be activated on
 "    start.  Note that hidden implies the unix meaning of those files that are
 "    prepended with a '.', and not the Windows meaning of those files with a
@@ -168,12 +174,10 @@
 "    "g:EasyGrepExtraWarnings" - Specifies that warnings be issued for 
 "    conditions that may be valid but confuse some users.
 
-" Idea: provide an option for case searching that is independent of ignorecase
 " Idea: allow entries in the file associations list to be regular expressions
 " Idea: include special paths like $INCLUDE in the mix
 " Idea: set file/directory exclusions
 " Idea: make sure that regex search and replace works as expected
-" Idea: create a replace option that is similar to GrepOptions?
 " Idea: remove location list options?
 " Idea: experiment with undo in ReplaceUndo instead of currently
 "       implemented substitute; this is challenging though as the user may make
@@ -189,7 +193,7 @@
 if exists("g:EasyGrepVersion") || &cp || !has("quickfix")
     finish
 endif
-let g:EasyGrepVersion = "0.5"
+let g:EasyGrepVersion = "0.8"
 " Check for Vim version 700 or greater {{{
 if v:version < 700
   echo "Sorry, EasyGrep ".g:EasyGrepVersion."\nONLY runs with Vim 7.0 and greater."
@@ -325,6 +329,26 @@ function! s:ShellEscapeList(lst, seperator)
     return s:DoEscapeList(a:lst, a:seperator, function("s:ShellEscape"))
 endfunction
 "}}}
+" GetSavedName {{{
+function! s:GetSavedName(var)
+    return "s:saved_".a:var
+endfunction
+" }}}
+" SaveVariable {{{
+function! s:SaveVariable(var)
+    let savedName = s:GetSavedName(a:var)
+    execute "let ".savedName." = &".a:var
+endfunction
+" }}}
+" RestoreVariable {{{
+function! s:RestoreVariable(var)
+    let savedName = s:GetSavedName(a:var)
+    if exists(savedName)
+        execute "let &".a:var." = ".savedName
+        unlet savedName
+    endif
+endfunction
+" }}}
 " OnOrOff {{{
 function! s:OnOrOff(num)
     return a:num == 0 ? 'off' : 'on'
@@ -383,6 +407,10 @@ if !exists("g:EasyGrepRecursive")
     let g:EasyGrepRecursive=0
 endif
 
+if !exists("g:EasyGrepIgnoreCase")
+    let g:EasyGrepIgnoreCase=&ignorecase
+endif
+
 if !exists("g:EasyGrepHidden")
     let g:EasyGrepHidden=0
 endif
@@ -410,6 +438,27 @@ endif
 if !exists("g:EasyGrepInvertWholeWord")
     let g:EasyGrepInvertWholeWord=0
 endif
+
+" GetAssociationFileList {{{
+function! s:GetFileAssociationList()
+    if exists("g:EasyGrepFileAssociations")
+        return g:EasyGrepFileAssociations
+    endif
+
+    let VimfilesDirs=split(&runtimepath, ',')
+    for v in VimfilesDirs
+        let f = s:BackToForwardSlash(v)."/plugin/EasyGrepFileAssociations"
+        if filereadable(f)
+            let g:EasyGrepFileAssociations=f
+            return f
+        endif
+    endfor
+
+    call s:Error("Grep Pattern file list can't be read")
+    let g:EasyGrepFileAssociations=""
+    return ""
+endfunction
+" }}}
 
 if !exists("g:EasyGrepFileAssociationsInExplorer")
     let g:EasyGrepFileAssociationsInExplorer=1
@@ -495,6 +544,7 @@ function! s:OpenOptionsExplorer()
     syn match Selection    /^\ \w.*/
     highlight def link Selection String
 
+    nnoremap <buffer> <silent> l    <Nop>
     nnoremap <buffer> <silent> q    :call <sid>Quit()<cr>
 
     nnoremap <buffer> <silent> a    :call <sid>ActivateAll()<cr>
@@ -504,7 +554,8 @@ function! s:OpenOptionsExplorer()
 
     nnoremap <buffer> <silent> c    :call <sid>ToggleCommand()<cr>
     nnoremap <buffer> <silent> r    :call <sid>ToggleRecursion()<cr>
-    nnoremap <buffer> <silent> i    :call <sid>ToggleHidden()<cr>
+    nnoremap <buffer> <silent> i    :call <sid>ToggleIgnoreCase()<cr>
+    nnoremap <buffer> <silent> h    :call <sid>ToggleHidden()<cr>
     nnoremap <buffer> <silent> w    :call <sid>ToggleWindow()<cr>
     nnoremap <buffer> <silent> o    :call <sid>ToggleOpenWindow()<cr>
     nnoremap <buffer> <silent> g    :call <sid>ToggleEveryMatch()<cr>
@@ -560,6 +611,7 @@ function! <sid>EchoOptionsSet()
             \ "g:EasyGrepMode",
             \ "g:EasyGrepCommand",
             \ "g:EasyGrepRecursive",
+            \ "g:EasyGrepIgnoreCase",
             \ "g:EasyGrepHidden",
             \ "g:EasyGrepAllOptionsInExplorer",
             \ "g:EasyGrepWindow",
@@ -764,6 +816,13 @@ function! <sid>ToggleRecursion()
     call s:Echo("Set recursive mode to (".s:OnOrOff(g:EasyGrepRecursive).")")
 endfunction
 " }}}
+" ToggleIgnoreCase {{{
+function! <sid>ToggleIgnoreCase()
+    let g:EasyGrepIgnoreCase = !g:EasyGrepIgnoreCase
+    call s:UpdateOptions()
+    call s:Echo("Set ignore case to (".s:OnOrOff(g:EasyGrepIgnoreCase).")")
+endfunction
+" }}}
 " ToggleHidden {{{
 function! <sid>ToggleHidden()
     let g:EasyGrepHidden = !g:EasyGrepHidden
@@ -771,7 +830,7 @@ function! <sid>ToggleHidden()
     call s:BuildPatternList()
     call s:UpdateOptions()
 
-    call s:Echo("Set include hidden files to (".s:OnOrOff(g:EasyGrepHidden).")")
+    call s:Echo("Set hidden files included to (".s:OnOrOff(g:EasyGrepHidden).")")
 endfunction
 " }}}
 " ToggleWindow {{{
@@ -1156,7 +1215,8 @@ function! s:CreateOptions()
 
     call add(s:Options, "\"q: quit")
     call add(s:Options, "\"r: recursive mode (".s:OnOrOff(g:EasyGrepRecursive).")")
-    call add(s:Options, "\"i: include hidden files (".s:OnOrOff(g:EasyGrepHidden).")")
+    call add(s:Options, "\"i: ignore case (".s:OnOrOff(g:EasyGrepIgnoreCase).")")
+    call add(s:Options, "\"h: hidden files included (".s:OnOrOff(g:EasyGrepHidden).")")
     call add(s:Options, "\"e: echo files that would be searched")
     if g:EasyGrepAllOptionsInExplorer
         call add(s:Options, "\"c: change grep command (".s:Commands[s:CommandChoice].")")
@@ -1204,26 +1264,6 @@ function! s:CreateDict()
     call s:ParseFileAssociationList()
     let s:NumFileAssociations = len(s:Dict) - s:NumSpecialOptions
 
-endfunction
-" }}}
-" GetAssociationFileList {{{
-function! s:GetFileAssociationList()
-    if exists("g:EasyGrepFileAssociations")
-        return g:EasyGrepFileAssociations
-    endif
-
-    let VimfilesDirs=split(&runtimepath, ',')
-    for v in VimfilesDirs
-        let f = s:BackToForwardSlash(v)."/plugin/EasyGrepFileAssociations"
-        if filereadable(f)
-            let g:EasyGrepFileAssociations=f
-            return f
-        endif
-    endfor
-
-    call s:Error("Grep Pattern file list can't be read")
-    let g:EasyGrepFileAssociations=""
-    return ""
 endfunction
 " }}}
 " ParseFileAssociationList {{{
@@ -1384,7 +1424,8 @@ function! s:CreateDirectMappings()
 
     nmap <silent> <leader>vyc    :call <sid>ToggleCommand()<cr>
     nmap <silent> <leader>vyr    :call <sid>ToggleRecursion()<cr>
-    nmap <silent> <leader>vyi    :call <sid>ToggleHidden()<cr>
+    nmap <silent> <leader>vyi    :call <sid>ToggleIgnoreCase()<cr>
+    nmap <silent> <leader>vyh    :call <sid>ToggleHidden()<cr>
     nmap <silent> <leader>vyw    :call <sid>ToggleWindow()<cr>
     nmap <silent> <leader>vyo    :call <sid>ToggleOpenWindow()<cr>
     nmap <silent> <leader>vyg    :call <sid>ToggleEveryMatch()<cr>
@@ -1460,7 +1501,7 @@ function! s:DoGrep(word, add, whole, count)
 
     if s:OptionsExplorerOpen == 1
         call s:Error("Error: Can't Grep while options window is open")
-        return
+        return 0
     endif
 
     let com = s:Commands[s:CommandChoice]
@@ -1511,6 +1552,22 @@ function! s:DoGrep(word, add, whole, count)
         endif
     endif
 
+    if g:EasyGrepIgnoreCase
+        if commandIsGrep
+            let opts .= "-i "
+        elseif commandIsFindstr
+            let opts .= "/I "
+        endif
+    else
+        if commandIsFindstr
+            let opts .= "/i "
+        endif
+    endif
+
+    if commandIsVimgrep
+        call s:SaveVariable("ignorecase")
+        let &ignorecase = g:EasyGrepIgnoreCase
+    endif
 
     call s:BuildPatternList()
 
@@ -1542,8 +1599,11 @@ function! s:DoGrep(word, add, whole, count)
     let win = g:EasyGrepWindow != 0 ? "l" : ""
 
     " TODO: enumerate the error conditions of this call
+    let failed = 0
     try
-        silent execute a:count.win.com.a:add." ".opts." ".s1.word.s2." ".s:FilesToGrep
+        let grepCommand = a:count.win.com.a:add." ".opts." ".s1.word.s2." ".s:FilesToGrep
+        "echo grepCommand
+        silent execute grepCommand
     catch
         if v:exception != 'E480'
             call s:WarnNoMatches(a:word)
@@ -1559,8 +1619,13 @@ function! s:DoGrep(word, add, whole, count)
         else
             call s:Error("FIXME: exception not caught ".v:exception)
         endif
-        return 0
+        let failed = 1
     endtry
+
+    call s:RestoreVariable("ignorecase")
+    if failed
+        return 0
+    endif
 
     if s:HasMatches()
         if g:EasyGrepOpenWindowOnMatch
@@ -1629,14 +1694,14 @@ function! s:ReplaceUndo(bang)
         return
     endif
 
-    " If s:savedSwitchbuf exists, that means the last command was interrupted;
-    " give it another shot
-    if !exists("s:savedSwitchbuf") && !exists("s:savedAutowriteall")
+    " If either of these variables exists, that means the last command was
+    " interrupted; give it another shot
+    if !exists(s:GetSavedName("switchbuf")) && !exists(s:GetSavedName("autowriteall"))
 
-        let s:savedSwitchbuf = &switchbuf
+        call s:SaveVariable("switchbuf")
         set switchbuf=useopen
         if g:EasyGrepReplaceWindowMode == 2
-            let s:savedAutowriteall = &autowriteall
+            call s:SaveVariable("autowriteall")
             set autowriteall
         else
             if g:EasyGrepReplaceWindowMode == 0
@@ -1720,15 +1785,8 @@ function! s:ReplaceUndo(bang)
         endtry
     endwhile
 
-    if exists("s:savedSwitchbuf")
-        let &switchbuf = s:savedSwitchbuf
-        unlet s:savedSwitchbuf
-    endif
-
-    if exists("s:savedAutowriteall")
-        let &autowriteall = s:savedAutowriteall
-        unlet s:savedAutowriteall
-    endif
+    call s:RestoreVariable("switchbuf")
+    call s:RestoreVariable("autowriteall")
 
     unlet s:actionList
     unlet s:LastErrorList
@@ -1753,10 +1811,10 @@ function! s:DoReplace(target, replacement, whole)
     let s:LastReplacement = a:replacement
 
 
-    let s:savedSwitchbuf = &switchbuf
+    call s:SaveVariable("switchbuf")
     set switchbuf=useopen
     if g:EasyGrepReplaceWindowMode == 2
-        let s:savedAutowriteall = &autowriteall
+        call s:SaveVariable("autowriteall")
         set autowriteall
     else
         if g:EasyGrepReplaceWindowMode == 0
@@ -1782,7 +1840,7 @@ function! s:DoReplace(target, replacement, whole)
     endif
     silent exe "s/".target."\\c//n"
 
-    let s:savedCursorLine = &cursorline
+    call s:SaveVariable("cursorline")
     set cursorline
 
     " TODO: figure out how to get the individual target at each step highlighted
@@ -1896,20 +1954,9 @@ function! s:DoReplace(target, replacement, whole)
     endwhile
 
 
-    if exists("s:savedSwitchbuf")
-        let &switchbuf = s:savedSwitchbuf
-        unlet s:savedSwitchbuf
-    endif
-
-    if exists("s:savedAutowriteall")
-        let &autowriteall = s:savedAutowriteall
-        unlet s:savedAutowriteall
-    endif
-
-    if exists("s:savedCursorLine")
-        tabdo let &cursorline = s:savedCursorLine
-        unlet s:savedCursorLine
-    endif
+    call s:RestoreVariable("switchbuf")
+    call s:RestoreVariable("autowriteall")
+    call s:RestoreVariable("cursorline")
 endfunction
 "}}}
 " }}}
