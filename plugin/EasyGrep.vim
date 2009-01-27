@@ -11,6 +11,14 @@
 "
 " Version:      See g:EasyGrepVersion for version number.
 " History:     
+"   0.9 Feature: Added forward slash delineated pattern to the Replace command
+"       e.g. :Replace /target/replacement/
+"       that allows more complicated replacements; you can now work with
+"       patterns that have spaces in them.
+"       Bugfix: If cursorline is off at the start of a replace, now ensuring
+"       that cursorline is turned off for all buffers, and not just the last one
+"       Bugfix: fixed an issue with an extra tab being opened during a
+"       replacement
 "   0.8 Implemented case sensitivity that is independent of ignorecase, thanks
 "       to Doro Wu for contributing to this functionality
 "       Changed shortcut key for hidden files from 'i' to 'h'
@@ -186,14 +194,16 @@
 " TODO: increase the granularity of the match so that you can individually
 "       decide per line
 " FIXME: cursorline doesn't always follow to the line at which the replacement
-" is going to happen
+"        is going to happen
+" FIXME: ReplaceUndo can't currently replace the text accurately in all cases if
+"        case insensitivity is turned on
 
 "
 " Initialization {{{
 if exists("g:EasyGrepVersion") || &cp || !has("quickfix")
     finish
 endif
-let g:EasyGrepVersion = "0.8"
+let g:EasyGrepVersion = "0.9"
 " Check for Vim version 700 or greater {{{
 if v:version < 700
   echo "Sorry, EasyGrep ".g:EasyGrepVersion."\nONLY runs with Vim 7.0 and greater."
@@ -341,11 +351,15 @@ function! s:SaveVariable(var)
 endfunction
 " }}}
 " RestoreVariable {{{
-function! s:RestoreVariable(var)
+" if a second variable is present, indicate no unlet
+function! s:RestoreVariable(var, ...)
+    let doUnlet = a:0 == 1
     let savedName = s:GetSavedName(a:var)
     if exists(savedName)
         execute "let &".a:var." = ".savedName
-        unlet savedName
+        if doUnlet
+            unlet savedName
+        endif
     endif
 endfunction
 " }}}
@@ -1677,14 +1691,50 @@ function! <sid>ReplaceCurrentWord(whole)
 endfunction
 "}}}
 " Replace {{{
-function! s:Replace(whole, ...)
+function! s:Replace(whole, argv)
+    let l = len(a:argv)
+    let invalid = 0
 
-    if a:0 != 2
-        call s:Error("Invalid arguments; usage: Replace target replacement")
+    if l == 0
+        let invalid = 1
+    elseif l > 3 && a:argv[0] == '/'
+        let ph = "EasyGrepPlaceholder"
+        let temp = substitute(a:argv, '\\/', ph, "g")
+        let l = len(temp)
+        if temp[l-1] != '/'
+            call s:Error("Missing trailing /")
+            let invalid = 1
+        elseif stridx(temp, '/', 1) == l-1
+            call s:Error("Missing middle /")
+            let invalid = 1
+        elseif s:countstr(temp, '/') > 3
+            call s:Error("Too many /'s, escape these if necessary")
+            let invalid = 1
+        else
+            let argv = split(temp, '/')
+            let i = 0
+            while i < len(argv)
+                let argv[i] = substitute(argv[i], ph, "\/", "g")
+                let i += 1
+            endwhile
+        endif
+    else
+        let argv = split(a:argv)
+        if len(argv) != 2
+            call s:Error("Too many arguments")
+            let invalid = 1
+        endif
+    endif
+
+    if invalid
+        call s:Error("usage: Replace /target/replacement/ --or-- Replace target replacement")
         return
     endif
 
-    call s:DoReplace(a:1, a:2, a:whole)
+    let target = argv[0]
+    let replacement = argv[1]
+
+    call s:DoReplace(target, replacement, a:whole)
 endfunction
 "}}}
 " ReplaceUndo {{{
@@ -1738,7 +1788,9 @@ function! s:ReplaceUndo(bang)
                             " only open a new tab when this window isn't already
                             " open
                             if index(bufList, thisFile) == -1
-                                tabnew
+                                if lastFile != -1
+                                    tabnew
+                                endif
                                 if g:EasyGrepWindow == 0
                                     copen
                                 else
@@ -1855,10 +1907,13 @@ function! s:DoReplace(target, replacement, whole)
 
             let thisFile = s:LastErrorList[i].bufnr
             if thisFile != lastFile
+                call s:RestoreVariable("cursorline", "no")
                 if g:EasyGrepReplaceWindowMode == 0
                     " only open a new tab when the window doesn't already exist
                     if index(bufList, thisFile) == -1
-                        tabnew
+                        if lastFile != -1
+                            tabnew
+                        endif
                         if g:EasyGrepWindow == 0
                             copen
                         else
@@ -1966,7 +2021,7 @@ command! -count -bang -nargs=1 Grep :call s:GrepInput( <f-args> , "", "<bang>", 
 command! -count -bang -nargs=1 GrepAdd :call s:GrepInput( <f-args>, "add", "<bang>", "<count>")
 command! -nargs=? GrepOptions :call <sid>GrepOptions( <f-args> )
 
-command! -bang -nargs=+ Replace :call s:Replace("<bang>", <f-args>)
+command! -bang -nargs=+ Replace :call s:Replace("<bang>", <q-args>)
 command! -bang ReplaceUndo :call s:ReplaceUndo("<bang>")
 "}}}
 " Keymaps {{{
