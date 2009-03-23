@@ -6,6 +6,7 @@
 
 C=*.c *.h
 C++=*.cpp *.hpp *.cxx *.hxx *.cc <C>
+Java=*.java
 VHDL=*.hdl *.vhd *.vhdl *.vbe *.vst
 Web=*.htm *.html *.js
 
