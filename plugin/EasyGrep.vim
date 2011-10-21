@@ -9,13 +9,13 @@
 " License:       Public domain, no restrictions whatsoever
 " Documentation: type ":help EasyGrep"
 "
-" Version:       0.98 -- Programs can inspect g:EasyGrepVersion
+" Version:       1.0 -- Programs can inspect g:EasyGrepVersion
 
 " Initialization {{{
 if exists("g:EasyGrepVersion") || &cp || !has("quickfix")
     finish
 endif
-let g:EasyGrepVersion = ".98"
+let g:EasyGrepVersion = "1.0"
 " Check for Vim version 700 or greater {{{
 if v:version < 700
     echo "Sorry, EasyGrep ".g:EasyGrepVersion."\nONLY runs with Vim 7.0 and greater."
@@ -173,7 +173,7 @@ endfunction
 "}}}
 " EscapeSpecial {{{
 function! s:EscapeSpecial(str)
-    let lst = [ '\', '/', '$' ]
+    let lst = [ '\', '/', '^', '$' ]
     if &magic
         let magicLst = [ '*', '.', '~', '[', ']' ]
         call extend(lst, magicLst)
@@ -400,7 +400,7 @@ endif
 "}}}
 
 " Internals {{{
-" Variables {{{
+" Global Variables {{{
 let s:OptionsExplorerOpen = 0
 
 let s:FilesToGrep="*"
@@ -436,6 +436,7 @@ endfunction
 " }}}
 
 " }}}
+" Common {{{
 " Echo {{{
 function! <sid>Echo(message)
     let str = ""
@@ -446,6 +447,191 @@ function! <sid>Echo(message)
     echo str
 endfunction
 "}}}
+" IsRecursivePattern {{{
+function! s:IsRecursivePattern(pattern)
+    return stridx(a:pattern, "\*\*\/") == 0 ? 1 : 0
+endfunction
+" }}}
+" GetPatternList {{{
+function! s:GetPatternList(sp, dopost)
+    let sp = a:sp
+    let dopost = a:dopost
+    if s:IsModeBuffers()
+        let filesToGrep = join(s:EscapeList(s:GetBufferNamesList(), " "), sp)
+    elseif s:IsModeTracked()
+
+        let str = s:TrackedExt
+        let i = s:FindByPattern(s:TrackedExt)
+        if i != -1
+            let keyList = [ i ]
+            let str = s:BreakDown(keyList)
+        endif
+
+        if dopost
+            let filesToGrep = s:BuildPatternListPost(str, sp)
+        else
+            let filesToGrep = str
+        endif
+    else
+        let i = 0
+        let numItems = len(s:Dict)
+        let keyList = []
+        while i < numItems
+            if s:Dict[i][2] == 1
+                call add(keyList, i)
+            endif
+            let i += 1
+        endwhile
+
+        if !empty(keyList)
+            let str = s:BreakDown(keyList)
+        else
+            echoerr "Inconsistency in EasyGrep script"
+            let str = "*"
+        endif
+        if dopost
+            let filesToGrep = s:BuildPatternListPost(str, sp)
+        else
+            let filesToGrep = str
+        endif
+    endif
+
+    let filesToGrep = s:Trim(filesToGrep)
+    return filesToGrep
+endfunction
+" }}}
+" BuildPatternList {{{
+function! s:BuildPatternList(...)
+    if a:0 > 0
+        let sp = a:1
+    else
+        let sp = " "
+    endif
+    let s:FilesToGrep = s:GetPatternList(sp, 1)
+endfunction
+" }}}
+" BuildPatternListPost {{{
+function! s:BuildPatternListPost(str, sp)
+    if empty(a:str)
+        return a:str
+    endif
+
+    let str = a:str
+    let sp = a:sp
+    if !s:IsModeBuffers() && g:EasyGrepSearchCurrentBufferDir && !g:EasyGrepRecursive
+        let str = s:AddBufferDirToPatternList(str,sp)
+    endif
+    let patternList = split(str)
+
+    if g:EasyGrepHidden
+        let i = 0
+        let size = len(patternList)
+        while i < size
+            let item = patternList[i]
+            if stridx(item, '*') != -1
+                let newItem = '.'.item
+                let i += 1
+                let size += 1
+                call insert(patternList, newItem, i)
+            endif
+            let i += 1
+        endwhile
+    endif
+
+    let str = ""
+    for item in patternList
+        if g:EasyGrepRecursive && s:CommandChoice == 0
+            let str .= "**/"
+        endif
+        let str .= item.sp
+    endfor
+
+    return str
+endfunction
+"}}}
+" AddBufferDirToPatternList {{{
+function! s:AddBufferDirToPatternList(str,sp)
+    let str = a:str
+    let sp = a:sp
+
+    " Build a list of the directories in buffers
+    let dirs = s:GetBufferDirsList()
+
+    let patternList = split(str, sp)
+
+    let currDir = getcwd()
+    for key in sort(dirs)
+        let newDir = key
+        let addToList = 1
+        if newDir == currDir || newDir == '.'
+            let addToList = 0
+        elseif g:EasyGrepRecursive && match(newDir,currDir)==0
+            let addToList = 0
+        endif
+        if addToList
+            for p in patternList
+                let str = str.sp.newDir."/".p
+            endfor
+        endif
+    endfor
+    return str
+endfunction
+"}}}
+" FindByPattern {{{
+function! s:FindByPattern(pattern)
+    let pattern = a:pattern
+    let i = 0
+    let numItems = len(s:Dict)
+    while i < numItems
+        let patterns = split(s:Dict[i][1])
+        for p in patterns
+            if pattern ==# p
+                return i
+            endif
+        endfor
+        let i += 1
+    endwhile
+    return -1
+endfunction
+" }}}
+" CompareCurrentFileCurrentDirectory {{{
+function! s:CompareCurrentFileCurrentDirectory()
+    if !g:EasyGrepExtraWarnings || s:CurrentFileCurrentDirChecked
+        return 1
+    endif
+    let s:CurrentFileCurrentDirChecked = 1
+    if !empty(&buftype) " don't check for quickfix and others
+        return
+    endif
+    if !s:IsModeBuffers()
+        let currFile = bufname("%")
+        if empty(currFile)
+            call s:Warning("cannot search the current file because it is unnamed")
+            return 0
+        endif
+        let fileDir = fnamemodify(currFile, ":p:h")
+        if !empty(fileDir) && !g:EasyGrepSearchCurrentBufferDir
+            let cwd = getcwd()
+            let willmatch = 1
+            if g:EasyGrepRecursive
+                if match(fileDir, cwd) != 0
+                    let willmatch = 0
+                endif
+            else
+                if fileDir != cwd
+                    let willmatch = 0
+                endif
+            endif
+            if !willmatch
+                call s:Warning("current file not searched, its directory [".fileDir."] doesn't match the working directory [".cwd."]")
+                return 0
+            endif
+        endif
+    endif
+    return 1
+endfunction
+" }}}
+" }}}
 " OptionsExplorer {{{
 " OpenOptionsExplorer {{{
 function! s:OpenOptionsExplorer()
@@ -498,7 +684,7 @@ function! s:OpenOptionsExplorer()
     nnoremap <buffer> <silent> e    :call <sid>EchoFilesSearched()<cr>
     nnoremap <buffer> <silent> s    :call <sid>Sort()<cr>
     nnoremap <buffer> <silent> m    :call <sid>ToggleReplaceWindowMode()<cr>
-    nnoremap <buffer> <silent> \|    :call <sid>EchoOptionsSet()<cr>
+    nnoremap <buffer> <silent> \|   :call <sid>EchoOptionsSet()<cr>
     nnoremap <buffer> <silent> *    :call <sid>ToggleFileAssociationsInExplorer()<cr>
     nnoremap <buffer> <silent> ?    :call <sid>ToggleOptionsDisplay()<cr>
     nnoremap <buffer> <silent> <cr> :call <sid>Select()<cr>
@@ -508,7 +694,7 @@ function! s:OpenOptionsExplorer()
     call s:FillWindow()
 endfunction
 " }}}
-" Options Explorer Mapped Functions {{{
+" Mapped Functions {{{
 " EchoFilesSearched {{{
 function! <sid>EchoFilesSearched()
     call s:BuildPatternList("\n")
@@ -550,6 +736,7 @@ function! <sid>EchoOptionsSet()
             \ "g:EasyGrepRecursive",
             \ "g:EasyGrepIgnoreCase",
             \ "g:EasyGrepHidden",
+            \ "g:EasyGrepSearchCurrentBufferDir",
             \ "g:EasyGrepAllOptionsInExplorer",
             \ "g:EasyGrepWindow",
             \ "g:EasyGrepReplaceWindowMode",
@@ -558,6 +745,7 @@ function! <sid>EchoOptionsSet()
             \ "g:EasyGrepJumpToMatch",
             \ "g:EasyGrepInvertWholeWord",
             \ "g:EasyGrepFileAssociationsInExplorer",
+            \ "g:EasyGrepExtraWarnings",
             \ "g:EasyGrepOptionPrefix",
             \ "g:EasyGrepReplaceAllPerFile"
             \ ]
@@ -641,7 +829,7 @@ function! s:ActivateChoice(choice)
             else
                 let isActivated = 1
                 let s:Dict[s:userChoicePos][1] = ""
-                call s:ClearActivated()
+                call s:ClearActivatedItems()
                 call s:UpdateAll()
             endif
         endif
@@ -655,7 +843,7 @@ function! s:ActivateChoice(choice)
         endif
 
         if count(specialKeys, choice) > 0
-            call s:ClearActivated()
+            call s:ClearActivatedItems()
             call s:UpdateAll()
         else
             for c in specialKeys
@@ -740,6 +928,15 @@ function! SortExtensionReversed(lhs, rhs)
     return r == 0 ? 0 : r == -1 ? 1 : -1
 endfunction
 " }}}
+" GetGrepCommandName {{{
+function! s:GetGrepCommandName()
+    let name = s:Commands[s:CommandChoice]
+    if name == "grep"
+        let name .= "='".&grepprg."'"
+    endif
+    return name
+endfunction
+" }}}
 " ToggleCommand {{{
 function! <sid>ToggleCommand()
     let s:CommandChoice += 1
@@ -750,7 +947,7 @@ function! <sid>ToggleCommand()
     call s:BuildPatternList()
     call s:UpdateOptions()
 
-    call s:Echo("Set command to (".s:Commands[s:CommandChoice].")")
+    call s:Echo("Set command to (".s:GetGrepCommandName().")")
 endfunction
 " }}}
 " ToggleRecursion {{{
@@ -884,6 +1081,29 @@ function! <sid>Quit()
 endfunction
 " }}}
 "}}}
+" ClearActivatedItems {{{
+function! s:ClearActivatedItems()
+    let i = 0
+    let numItems = len(s:Dict)
+    while i < numItems
+        let s:Dict[i][2] = 0
+        let i += 1
+    endwhile
+endfunction
+" }}}
+" HasActivatedItem {{{
+function! s:HasActivatedItem()
+    let i = 0
+    let numItems = len(s:Dict)
+    while i < numItems
+        if s:Dict[i][2] == 1
+            return 1
+        endif
+        let i += 1
+    endwhile
+    return 0
+endfunction
+" }}}
 " UpdateOptions {{{
 function! s:UpdateOptions()
     if !s:OptionsExplorerOpen
@@ -971,30 +1191,133 @@ function! s:FillWindow()
     execute "".len(s:Options)+1
 endfunction
 " }}}
-" }}}
-" IsRecursive {{{
-function! s:IsRecursive(pattern)
-    return stridx(a:pattern, "\*\*\/") == 0 ? 1 : 0
+" CreateOptionMappings {{{
+function! s:CreateOptionMappings()
+    if empty(g:EasyGrepOptionPrefix)
+        return
+    endif
+
+    let p = g:EasyGrepOptionPrefix
+
+    exe "nmap <silent> ".p."a  :call <sid>ActivateAll()<cr>"
+    exe "nmap <silent> ".p."b  :call <sid>ActivateBuffers()<cr>"
+    exe "nmap <silent> ".p."t  :call <sid>ActivateTracked()<cr>"
+    exe "nmap <silent> ".p."u  :call <sid>ActivateUser()<cr>"
+
+    exe "nmap <silent> ".p."c  :call <sid>ToggleCommand()<cr>"
+    exe "nmap <silent> ".p."r  :call <sid>ToggleRecursion()<cr>"
+    exe "nmap <silent> ".p."i  :call <sid>ToggleIgnoreCase()<cr>"
+    exe "nmap <silent> ".p."h  :call <sid>ToggleHidden()<cr>"
+    exe "nmap <silent> ".p."w  :call <sid>ToggleWindow()<cr>"
+    exe "nmap <silent> ".p."o  :call <sid>ToggleOpenWindow()<cr>"
+    exe "nmap <silent> ".p."g  :call <sid>ToggleEveryMatch()<cr>"
+    exe "nmap <silent> ".p."p  :call <sid>ToggleJumpToMatch()<cr>"
+    exe "nmap <silent> ".p."!  :call <sid>ToggleWholeWord()<cr>"
+    exe "nmap <silent> ".p."e  :call <sid>EchoFilesSearched()<cr>"
+    exe "nmap <silent> ".p."s  :call <sid>Sort()<cr>"
+    exe "nmap <silent> ".p."m  :call <sid>ToggleReplaceWindowMode()<cr>"
+    exe "nmap <silent> ".p."?  :call <sid>ToggleOptionsDisplay()<cr>"
+    exe "nmap <silent> ".p."\\|  :call <sid>EchoOptionsSet()<cr>"
+    exe "nmap <silent> ".p."*  :call <sid>ToggleFileAssociationsInExplorer()<cr>"
+endfunction
+"}}}
+" GrepOptions {{{
+function! <sid>GrepOptions()
+    call s:SetGatewayVariables()
+    call s:CreateDict()
+    call s:OpenOptionsExplorer()
+    return s:ClearGatewayVariables()
 endfunction
 " }}}
-" IsModeAll {{{
-function! s:IsModeAll()
-    return s:Dict[s:allChoicePos][2] == 1
+" CreateOptions {{{
+function! s:CreateOptions()
+
+    let s:Options = []
+
+    call add(s:Options, "\"q: quit")
+    call add(s:Options, "\"r: recursive mode (".s:OnOrOff(g:EasyGrepRecursive).")")
+    call add(s:Options, "\"i: ignore case (".s:OnOrOff(g:EasyGrepIgnoreCase).")")
+    call add(s:Options, "\"h: hidden files included (".s:OnOrOff(g:EasyGrepHidden).")")
+    call add(s:Options, "\"e: echo files that would be searched")
+    if g:EasyGrepAllOptionsInExplorer
+        call add(s:Options, "\"c: change grep command (".s:GetGrepCommandName().")")
+        call add(s:Options, "\"w: window to use (".s:GetErrorListName().")")
+        call add(s:Options, "\"m: replace window mode (".s:GetReplaceWindowModeString(g:EasyGrepReplaceWindowMode).")")
+        call add(s:Options, "\"o: open window on match (".s:OnOrOff(g:EasyGrepOpenWindowOnMatch).")")
+        call add(s:Options, "\"g: seperate multiple matches (".s:OnOrOff(g:EasyGrepEveryMatch).")")
+        call add(s:Options, "\"p: jump to match (".s:OnOrOff(g:EasyGrepJumpToMatch).")")
+        call add(s:Options, "\"!: invert the meaning of whole word (".s:OnOrOff(g:EasyGrepInvertWholeWord).")")
+        call add(s:Options, "\"*: show file associations list (".s:OnOrOff(g:EasyGrepFileAssociationsInExplorer).")")
+        if g:EasyGrepFileAssociationsInExplorer
+            call add(s:Options, "\"s: change file associations list sorting (".s:SortOptions[s:SortChoice].")")
+        endif
+        call add(s:Options, "")
+        call add(s:Options, "\"a: activate 'All' mode")
+        call add(s:Options, "\"b: activate 'Buffers' mode")
+        call add(s:Options, "\"t: activate 'TrackExt' mode")
+        call add(s:Options, "\"u: activate 'User' mode")
+        call add(s:Options, "")
+        call add(s:Options, "\"|: echo options that are set")
+    endif
+    call add(s:Options, "\"?: show ". (g:EasyGrepAllOptionsInExplorer ? "fewer" : "more")." options")
+    call add(s:Options, "")
+    call add(s:Options, "\"Current Directory: ".getcwd())
+    call add(s:Options, "\"Grep Targets: ".s:FilesToGrep)
+    call add(s:Options, "")
+
 endfunction
-" }}}
-" IsModeBuffers {{{
-function! s:IsModeBuffers()
-    return s:Dict[s:buffersChoicePos][2] == 1
+"}}}
+" GrepSetManual {{{
+function! s:GrepSetManual(str)
+    call s:SetGatewayVariables()
+    let str = a:str
+    if s:IsRecursivePattern(str)
+        call s:Error("User specified grep pattern may not have a recursive specifier")
+        return -1
+    endif
+    let pos = s:userChoicePos
+
+    let i = s:FindByPattern(str)
+    if i != -1
+        let s2 = s:Dict[i][1]
+        if str == s2
+            let pos = i
+        else
+            let msg = "Pattern '".s:Dict[i][0]."=".s:Dict[i][1]."' matches your input, use this?"
+            let response = confirm(msg, "&Yes\n&No")
+            if response == 1
+                let pos = i
+            endif
+        endif
+    endif
+
+    return pos
 endfunction
+"}}}
 " }}}
-" IsModeTracked {{{
-function! s:IsModeTracked()
-    return s:Dict[s:trackChoicePos][2] == 1
-endfunction
-" }}}
-" IsModeUser {{{
-function! s:IsModeUser()
-    return s:Dict[s:userChoicePos][2] == 1
+" EasyGrepFileAssociations {{{
+" CreateDict {{{
+function! s:CreateDict()
+    if exists("s:Dict")
+        return
+    endif
+
+    let s:Dict = [ ]
+    call add(s:Dict, [ "All" , "*", g:EasyGrepMode==0 ? 1 : 0 ] )
+    call add(s:Dict, [ "Buffers" , "*Buffers*", g:EasyGrepMode==1 ? 1 : 0  ] )
+    call add(s:Dict, [ "TrackExt" , "*TrackExt*", g:EasyGrepMode==2 ? 1 : 0  ] )
+    call add(s:Dict, [ "User" , "", 0 ] )
+
+    let s:allChoicePos = 0
+    let s:buffersChoicePos = 1
+    let s:trackChoicePos = 2
+    let s:userChoicePos = 3
+
+    let s:NumSpecialOptions = len(s:Dict)
+
+    call s:ParseFileAssociationList()
+    let s:NumFileAssociations = len(s:Dict) - s:NumSpecialOptions
+
 endfunction
 " }}}
 " BreakDown {{{
@@ -1037,141 +1360,32 @@ function! s:DoBreakDown(key)
     return str
 endfunction
 "}}}
-" GetPatternList {{{
-function! s:GetPatternList(sp, dopost)
-    let sp = a:sp
-    let dopost = a:dopost
-    if s:IsModeBuffers()
-        let filesToGrep = join(s:EscapeList(s:GetBufferNamesList(), " "), sp)
-    elseif s:IsModeTracked()
-
-        let str = s:TrackedExt
-        let i = s:FindByPattern(s:TrackedExt)
-        if i != -1
-            let keyList = [ i ]
-            let str = s:BreakDown(keyList)
-        endif
-
-        if dopost
-            let filesToGrep = s:BuildPatternListPost(str, sp)
-        else
-            let filesToGrep = str
-        endif
-    else
-        let i = 0
-        let numItems = len(s:Dict)
-        let keyList = []
-        while i < numItems
-            if s:Dict[i][2] == 1
-                call add(keyList, i)
+" CheckLinks {{{
+function! s:CheckLinks()
+    let i = s:NumSpecialOptions
+    let end = len(s:Dict)
+    while i < end
+        let patterns = split(s:Dict[i][1])
+        let j = 0
+        for p in patterns
+            if s:IsLink(p) && s:FindByKey(s:GetKeyFromLink(p)) == -1
+                call s:Warning("Key(".p.") links to a nonexistent key")
+                call remove(patterns, j)
+                let j -= 1
             endif
-            let i += 1
-        endwhile
+            let j += 1
+        endfor
 
-        if !empty(keyList)
-            let str = s:BreakDown(keyList)
+        if len(patterns) == 0
+            call s:Warning("Key(".s:Dict[i][0].") has no valid patterns or links")
+            call remove(s:Dict, i)
         else
-            echoerr "Inconsistency in EasyGrep script"
-            let str = "*"
+            let s:Dict[i][1] = join(patterns)
         endif
-        if dopost
-            let filesToGrep = s:BuildPatternListPost(str, sp)
-        else
-            let filesToGrep = str
-        endif
-    endif
-
-    let filesToGrep = s:Trim(filesToGrep)
-    return filesToGrep
-endfunction
-" }}}
-" BuildPatternList {{{
-function! s:BuildPatternList(...)
-    if a:0 > 0
-        let sp = a:1
-    else
-        let sp = " "
-    endif
-    let s:FilesToGrep = s:GetPatternList(sp, 1)
-endfunction
-" }}}
-" AddBufferDirToPatternList {{{
-function! s:AddBufferDirToPatternList(str,sp)
-    let str = a:str
-    let sp = a:sp
-
-    " Build a list of the directories in buffers
-    let dirs = s:GetBufferDirsList()
-
-    let patternList = split(str, sp)
-
-    let currDir = getcwd()
-    for key in sort(dirs)
-        let newDir = key
-        let addToList = 1
-        if newDir == currDir || newDir == '.'
-            let addToList = 0
-        elseif g:EasyGrepRecursive && match(newDir,currDir)==0
-            let addToList = 0
-        endif
-        if addToList
-            for p in patternList
-                let str = str.sp.newDir."/".p
-            endfor
-        endif
-    endfor
-    return str
-endfunction
-"}}}
-" BuildPatternListPost {{{
-function! s:BuildPatternListPost(str, sp)
-    if empty(a:str)
-        return a:str
-    endif
-
-    let str = a:str
-    let sp = a:sp
-    if !s:IsModeBuffers() && g:EasyGrepSearchCurrentBufferDir && !g:EasyGrepRecursive
-        let str = s:AddBufferDirToPatternList(str,sp)
-    endif
-    let patternList = split(str)
-
-    if g:EasyGrepHidden
-        let i = 0
-        let size = len(patternList)
-        while i < size
-            let item = patternList[i]
-            if stridx(item, '*') != -1
-                let newItem = '.'.item
-                let i += 1
-                let size += 1
-                call insert(patternList, newItem, i)
-            endif
-            let i += 1
-        endwhile
-    endif
-
-    let str = ""
-    for item in patternList
-        if g:EasyGrepRecursive && s:CommandChoice == 0
-            let str .= "**/"
-        endif
-        let str .= item.sp
-    endfor
-
-    return str
-endfunction
-"}}}
-" ClearActivated {{{
-function! s:ClearActivated()
-    let i = 0
-    let numItems = len(s:Dict)
-    while i < numItems
-        let s:Dict[i][2] = 0
         let i += 1
     endwhile
 endfunction
-" }}}
+"}}}
 " FindByKey {{{
 function! s:FindByKey(key)
     let i = 0
@@ -1185,239 +1399,6 @@ function! s:FindByKey(key)
     return -1
 endfunction
 " }}}
-" FindByPattern {{{
-function! s:FindByPattern(pattern)
-    let pattern = a:pattern
-    let i = 0
-    let numItems = len(s:Dict)
-    while i < numItems
-        let patterns = split(s:Dict[i][1])
-        for p in patterns
-            if pattern ==# p
-                return i
-            endif
-        endfor
-        let i += 1
-    endwhile
-    return -1
-endfunction
-" }}}
-" HasActivatedItem {{{
-function! s:HasActivatedItem()
-    let i = 0
-    let numItems = len(s:Dict)
-    while i < numItems
-        if s:Dict[i][2] == 1
-            return 1
-        endif
-        let i += 1
-    endwhile
-    return 0
-endfunction
-" }}}
-" HasFilesThatMatch{{{
-function! s:HasFilesThatMatch()
-    let saveFilesToGrep = s:FilesToGrep
-
-    call s:BuildPatternList("\n")
-    let patternList = split(s:FilesToGrep, "\n")
-    for p in patternList
-        let p = s:Trim(p)
-        let fileList = split(glob(p), "\n")
-        for f in fileList
-            if filereadable(f)
-                let s:FilesToGrep = saveFilesToGrep
-                return 1
-            endif
-        endfor
-    endfor
-
-    let s:FilesToGrep = saveFilesToGrep
-    return 0
-endfunction
-"}}}
-" HasMatches{{{
-function! s:HasMatches()
-    return !empty(s:GetErrorList())
-endfunction
-"}}}
-" WarnNoMatches {{{
-function! s:WarnNoMatches(pattern)
-    if s:IsModeBuffers()
-        let fpat = "*Buffers*"
-    elseif s:IsModeAll()
-        let fpat = "*"
-    else
-        let fpat = s:GetPatternList(" ", 0)
-    endif
-
-    let r = g:EasyGrepRecursive ? " (Recursive)" : ""
-    let h = g:EasyGrepHidden    ? " (Hidden)"    : ""
-
-    call s:Warning("No matches for '".a:pattern."'")
-    call s:Warning("File Pattern: ".fpat.r.h)
-    if g:EasyGrepSearchCurrentBufferDir
-        let dirs = s:GetBufferDirsList()
-    else
-        let dirs = [ '.' ]
-    endif
-    let s = "Directories:"
-    for d in dirs
-        if d == "."
-            let d = getcwd()
-        endif
-        call s:Warning(s." ".d)
-        let s = "            "
-    endfor
-endfunction
-" }}}
-" GetErrorList {{{
-function! s:GetErrorList()
-    if g:EasyGrepWindow == 0
-        return getqflist()
-    else
-        return getloclist(0)
-    endif
-endfunction
-"}}}
-" GetErrorListName {{{
-function! s:GetErrorListName()
-    if g:EasyGrepWindow == 0
-        return 'quickfix'
-    else
-        return 'location list'
-    endif
-endfunction
-"}}}
-" FilterErrorlist {{{
-function! s:FilterErrorlist(...)
-    let ltype = 0
-    let mode = 'g'
-
-    let filterlist = []
-    for s in a:000
-        if s[0] == '-'
-            if s == '-v'
-                let mode = 'v'
-            elseif s == '-g'
-                if mode == 'v'
-                    call s:Error("Multiple -v / -g arguments given")
-                    return
-                endif
-                let mode = 'g'
-            elseif s == '-l'
-                let ltype = 1
-            else
-                call s:Error("Invalid command line switch")
-                return
-            endif
-        else
-            call add(filterlist, s)
-        endif
-    endfor
-
-    if empty(filterlist)
-        call s:Error("Missing pattern to filter")
-        return
-    endif
-
-    if ltype == 0
-        let lst = getqflist()
-    else
-        let lst = getloclist(0)
-    endif
-
-    if empty(lst)
-        call s:Error("Error list is empty")
-        return
-    endif
-
-    let newlst = []
-    for d in lst
-        let matched = 0
-        for f in filterlist
-            let r = match(d.text, f)
-            if mode == 'g'
-                let matched = (r != -1)
-            else
-                let matched = (r == -1)
-            endif
-            if matched == 1
-                call add(newlst, d)
-                break
-            endif
-        endfor
-    endfor
-
-    if ltype == 0
-        call setqflist(newlst)
-    else
-        call getloclist(0,newlst)
-    endif
-endfunction
-"}}}
-" CreateOptions {{{
-function! s:CreateOptions()
-
-    let s:Options = []
-
-    call add(s:Options, "\"q: quit")
-    call add(s:Options, "\"r: recursive mode (".s:OnOrOff(g:EasyGrepRecursive).")")
-    call add(s:Options, "\"i: ignore case (".s:OnOrOff(g:EasyGrepIgnoreCase).")")
-    call add(s:Options, "\"h: hidden files included (".s:OnOrOff(g:EasyGrepHidden).")")
-    call add(s:Options, "\"e: echo files that would be searched")
-    if g:EasyGrepAllOptionsInExplorer
-        call add(s:Options, "\"c: change grep command (".s:Commands[s:CommandChoice].")")
-        call add(s:Options, "\"w: window to use (".s:GetErrorListName().")")
-        call add(s:Options, "\"m: replace window mode (".s:GetReplaceWindowModeString(g:EasyGrepReplaceWindowMode).")")
-        call add(s:Options, "\"o: open window on match (".s:OnOrOff(g:EasyGrepOpenWindowOnMatch).")")
-        call add(s:Options, "\"g: seperate multiple matches (".s:OnOrOff(g:EasyGrepEveryMatch).")")
-        call add(s:Options, "\"p: jump to match (".s:OnOrOff(g:EasyGrepJumpToMatch).")")
-        call add(s:Options, "\"!: invert the meaning of whole word (".s:OnOrOff(g:EasyGrepInvertWholeWord).")")
-        call add(s:Options, "\"*: show file associations list (".s:OnOrOff(g:EasyGrepFileAssociationsInExplorer).")")
-        if g:EasyGrepFileAssociationsInExplorer
-            call add(s:Options, "\"s: change file associations list sorting (".s:SortOptions[s:SortChoice].")")
-        endif
-        call add(s:Options, "")
-        call add(s:Options, "\"a: activate 'All' mode")
-        call add(s:Options, "\"b: activate 'Buffers' mode")
-        call add(s:Options, "\"t: activate 'TrackExt' mode")
-        call add(s:Options, "\"u: activate 'User' mode")
-        call add(s:Options, "")
-        call add(s:Options, "\"|: echo options that are set")
-    endif
-    call add(s:Options, "\"?: show ". (g:EasyGrepAllOptionsInExplorer ? "fewer" : "more")." options")
-    call add(s:Options, "")
-    call add(s:Options, "\"Current Directory: ".getcwd())
-    call add(s:Options, "\"Grep Targets: ".s:FilesToGrep)
-    call add(s:Options, "")
-
-endfunction
-"}}}
-" CreateDict {{{
-function! s:CreateDict()
-    if exists("s:Dict")
-        return
-    endif
-
-    let s:Dict = [ ]
-    call add(s:Dict, [ "All" , "*", g:EasyGrepMode==0 ? 1 : 0 ] )
-    call add(s:Dict, [ "Buffers" , "*Buffers*", g:EasyGrepMode==1 ? 1 : 0  ] )
-    call add(s:Dict, [ "TrackExt" , "*TrackExt*", g:EasyGrepMode==2 ? 1 : 0  ] )
-    call add(s:Dict, [ "User" , "", 0 ] )
-
-    let s:allChoicePos = 0
-    let s:buffersChoicePos = 1
-    let s:trackChoicePos = 2
-    let s:userChoicePos = 3
-
-    let s:NumSpecialOptions = len(s:Dict)
-
-    call s:ParseFileAssociationList()
-    let s:NumFileAssociations = len(s:Dict) - s:NumSpecialOptions
-
-endfunction
-" }}}
 " IsInDict {{{
 function! s:IsInDict(pat)
     let i = 0
@@ -1429,6 +1410,16 @@ function! s:IsInDict(pat)
         let i += 1
     endwhile
     return 0
+endfunction
+" }}}
+" GetKeyFromLink {{{
+function! s:GetKeyFromLink(str)
+    return strpart(a:str, 1, len(a:str)-2)
+endfunction
+"}}}
+" IsLink {{{
+function! s:IsLink(str)
+    return a:str[0] == '<' && a:str[len(a:str)-1] == '>'
 endfunction
 " }}}
 " ParseFileAssociationList {{{
@@ -1504,42 +1495,29 @@ function! s:ParseFileAssociationList()
     call s:CheckLinks()
 endfunction
 "}}}
-" IsLink {{{
-function! s:IsLink(str)
-    return a:str[0] == '<' && a:str[len(a:str)-1] == '>'
+" }}}
+" Modes {{{
+" IsModeAll {{{
+function! s:IsModeAll()
+    return s:Dict[s:allChoicePos][2] == 1
 endfunction
-"}}}
-" GetKeyFromLink {{{
-function! s:GetKeyFromLink(str)
-    return strpart(a:str, 1, len(a:str)-2)
+" }}}
+" IsModeBuffers {{{
+function! s:IsModeBuffers()
+    return s:Dict[s:buffersChoicePos][2] == 1
 endfunction
-"}}}
-" CheckLinks {{{
-function! s:CheckLinks()
-    let i = s:NumSpecialOptions
-    let end = len(s:Dict)
-    while i < end
-        let patterns = split(s:Dict[i][1])
-        let j = 0
-        for p in patterns
-            if s:IsLink(p) && s:FindByKey(s:GetKeyFromLink(p)) == -1
-                call s:Warning("Key(".p.") links to a nonexistent key")
-                call remove(patterns, j)
-                let j -= 1
-            endif
-            let j += 1
-        endfor
-
-        if len(patterns) == 0
-            call s:Warning("Key(".s:Dict[i][0].") has no valid patterns or links")
-            call remove(s:Dict, i)
-        else
-            let s:Dict[i][1] = join(patterns)
-        endif
-        let i += 1
-    endwhile
+" }}}
+" IsModeTracked {{{
+function! s:IsModeTracked()
+    return s:Dict[s:trackChoicePos][2] == 1
 endfunction
-"}}}
+" }}}
+" IsModeUser {{{
+function! s:IsModeUser()
+    return s:Dict[s:userChoicePos][2] == 1
+endfunction
+" }}}
+" Tracked {{{
 " SetCurrentExtension {{{
 function! s:SetCurrentExtension()
     if !empty(&buftype)
@@ -1592,78 +1570,18 @@ function! s:SetWatchExtension()
 endfunction
 call s:SetWatchExtension()
 "}}}
-" CompareCurrentFileCurrentDirectory {{{
-function! s:CompareCurrentFileCurrentDirectory()
-    if !g:EasyGrepExtraWarnings || s:CurrentFileCurrentDirChecked
-        return 1
-    endif
-    let s:CurrentFileCurrentDirChecked = 1
-    if !empty(&buftype) " don't check for quickfix and others
-        return
-    endif
-    if !s:IsModeBuffers()
-        let currFile = bufname("%")
-        if empty(currFile)
-            call s:Warning("cannot search the current file because it is unnamed")
-            return 0
-        endif
-        let fileDir = fnamemodify(currFile, ":p:h")
-        if !empty(fileDir) && !g:EasyGrepSearchCurrentBufferDir
-            let cwd = getcwd()
-            if fileDir != cwd
-                call s:Warning("current file not searched, its directory [".fileDir."] doesn't match the working directory [".cwd."]")
-                return 0
-            endif
-        endif
-    endif
-    return 1
-endfunction
 " }}}
-" CreateOptionMappings {{{
-function! s:CreateOptionMappings()
-    if empty(g:EasyGrepOptionPrefix)
-        return
-    endif
-
-    let p = g:EasyGrepOptionPrefix
-
-    exe "nmap <silent> ".p."a  :call <sid>ActivateAll()<cr>"
-    exe "nmap <silent> ".p."b  :call <sid>ActivateBuffers()<cr>"
-    exe "nmap <silent> ".p."t  :call <sid>ActivateTracked()<cr>"
-    exe "nmap <silent> ".p."u  :call <sid>ActivateUser()<cr>"
-
-    exe "nmap <silent> ".p."c  :call <sid>ToggleCommand()<cr>"
-    exe "nmap <silent> ".p."r  :call <sid>ToggleRecursion()<cr>"
-    exe "nmap <silent> ".p."i  :call <sid>ToggleIgnoreCase()<cr>"
-    exe "nmap <silent> ".p."h  :call <sid>ToggleHidden()<cr>"
-    exe "nmap <silent> ".p."w  :call <sid>ToggleWindow()<cr>"
-    exe "nmap <silent> ".p."o  :call <sid>ToggleOpenWindow()<cr>"
-    exe "nmap <silent> ".p."g  :call <sid>ToggleEveryMatch()<cr>"
-    exe "nmap <silent> ".p."p  :call <sid>ToggleJumpToMatch()<cr>"
-    exe "nmap <silent> ".p."!  :call <sid>ToggleWholeWord()<cr>"
-    exe "nmap <silent> ".p."e  :call <sid>EchoFilesSearched()<cr>"
-    exe "nmap <silent> ".p."s  :call <sid>Sort()<cr>"
-    exe "nmap <silent> ".p."m  :call <sid>ToggleReplaceWindowMode()<cr>"
-    exe "nmap <silent> ".p."?  :call <sid>ToggleOptionsDisplay()<cr>"
-    exe "nmap <silent> ".p."\\|  :call <sid>EchoOptionsSet()<cr>"
-    exe "nmap <silent> ".p."*  :call <sid>ToggleFileAssociationsInExplorer()<cr>"
-endfunction
-"}}}
-" GetCurrentWord {{{
-function! s:GetCurrentWord()
-    return expand("<cword>")
-endfunction
 " }}}
-" GetCurrentSelection {{{
-function! s:GetCurrentSelection()
-    return s:ClearNewline(@")
-endfunction
-" }}}
-" GrepOptions {{{
-function! <sid>GrepOptions()
+" Selection Functions {{{
+" GrepSelection {{{
+function! <sid>GrepSelection(add, whole)
     call s:SetGatewayVariables()
-    call s:CreateDict()
-    call s:OpenOptionsExplorer()
+    let currSelection=s:GetCurrentSelection()
+    if empty(currSelection)
+        call s:Warning("No current selection")
+        return s:ClearGatewayVariables()
+    endif
+    call s:DoGrep(currSelection, a:add, a:whole, "", 1)
     return s:ClearGatewayVariables()
 endfunction
 " }}}
@@ -1681,15 +1599,56 @@ function! <sid>GrepCurrentWord(add, whole)
     return s:ClearGatewayVariables()
 endfunction
 " }}}
-" GrepSelection {{{
-function! <sid>GrepSelection(add, whole)
+" ReplaceSelection {{{
+function! <sid>ReplaceSelection(whole)
     call s:SetGatewayVariables()
     let currSelection=s:GetCurrentSelection()
     if empty(currSelection)
         call s:Warning("No current selection")
         return s:ClearGatewayVariables()
     endif
-    call s:DoGrep(currSelection, a:add, a:whole, "", 1)
+
+    call s:ReplaceString(currSelection, a:whole, 1)
+    return s:ClearGatewayVariables()
+endfunction
+"}}}
+" GetCurrentWord {{{
+function! s:GetCurrentWord()
+    return expand("<cword>")
+endfunction
+" }}}
+" GetCurrentSelection {{{
+function! s:GetCurrentSelection()
+    return s:ClearNewline(@")
+endfunction
+" }}}
+" ReplaceCurrentWord {{{
+function! <sid>ReplaceCurrentWord(whole)
+    call s:SetGatewayVariables()
+    let currWord=s:GetCurrentWord()
+    if empty(currWord)
+        call s:Warning("No current word")
+        return s:ClearGatewayVariables()
+    endif
+
+    call s:ReplaceString(currWord, a:whole, 1)
+    return s:ClearGatewayVariables()
+endfunction
+"}}}
+" }}}
+" Command Line Functions {{{
+" GrepCommandLine {{{
+function! s:GrepCommandLine(argv, add, bang)
+    call s:SetGatewayVariables()
+    let opts = s:ParseCommandLine(a:argv)
+    if !empty(opts["failedparse"])
+        let errorstring="Invalid command: ".opts["failedparse"]
+        echo errorstring
+    else
+        call s:SetCommandLineOptions(opts)
+        call s:DoGrep(opts["pattern"], a:add, a:bang == "!" ? 1 : 0, opts["count"]>0 ? opts["count"] : "", 0)
+        call s:RestoreCommandLineOptions(opts)
+    endif
     return s:ClearGatewayVariables()
 endfunction
 " }}}
@@ -1702,6 +1661,7 @@ function! s:ParseCommandLine(argv)
     let opts["count"] = 0
     let opts["pattern"] = ""
     let opts["failedparse"] = ""
+    let parseopts = 1
 
     if empty(a:argv)
         return opts
@@ -1713,7 +1673,13 @@ function! s:ParseCommandLine(argv)
     let j = 0
     while j < numtokens
         let tok = tokens[j]
-        if tok[0] == '-'
+        let tok = s:Trim(tok)
+        if tok == "--"
+            let parseopts = 0
+            let j += 1
+            continue
+        endif
+        if tok[0] == '-' && parseopts
             let tok = s:Trim(tok)
             if tok =~ '-[0-9]\+'
                 let opts["count"] = tok[1:]
@@ -1778,85 +1744,6 @@ function! s:RestoreCommandLineOptions(opts)
     call s:RestoreVariable("g:EasyGrepIgnoreCase")
 endfunction
 " }}}
-" GrepCommandLine {{{
-function! s:GrepCommandLine(argv, add, bang)
-    call s:SetGatewayVariables()
-    let opts = s:ParseCommandLine(a:argv)
-    if !empty(opts["failedparse"])
-        let errorstring="Invalid command: ".opts["failedparse"]
-        echo errorstring
-    else
-        call s:SetCommandLineOptions(opts)
-        call s:DoGrep(opts["pattern"], a:add, a:bang == "!" ? 1 : 0, opts["count"]>0 ? opts["count"] : "", 0)
-        call s:RestoreCommandLineOptions(opts)
-    endif
-    return s:ClearGatewayVariables()
-endfunction
-" }}}
-" GrepSetManual {{{
-function! s:GrepSetManual(str)
-    call s:SetGatewayVariables()
-    let str = a:str
-    if s:IsRecursive(str)
-        call s:Error("User specified grep pattern may not have a recursive specifier")
-        return -1
-    endif
-    let pos = s:userChoicePos
-
-    let i = s:FindByPattern(str)
-    if i != -1
-        let s2 = s:Dict[i][1]
-        if str == s2
-            let pos = i
-        else
-            let msg = "Pattern '".s:Dict[i][0]."=".s:Dict[i][1]."' matches your input, use this?"
-            let response = confirm(msg, "&Yes\n&No")
-            if response == 1
-                let pos = i
-            endif
-        endif
-    endif
-
-    return pos
-endfunction
-"}}}
-" ReplaceCurrentWord {{{
-function! <sid>ReplaceCurrentWord(whole)
-    call s:SetGatewayVariables()
-    let currWord=s:GetCurrentWord()
-    if empty(currWord)
-        call s:Warning("No current word")
-        return s:ClearGatewayVariables()
-    endif
-
-    call s:ReplaceString(currWord, a:whole, 1)
-    return s:ClearGatewayVariables()
-endfunction
-"}}}
-" ReplaceSelection {{{
-function! <sid>ReplaceSelection(whole)
-    call s:SetGatewayVariables()
-    let currSelection=s:GetCurrentSelection()
-    if empty(currSelection)
-        call s:Warning("No current selection")
-        return s:ClearGatewayVariables()
-    endif
-
-    call s:ReplaceString(currSelection, a:whole, 1)
-    return s:ClearGatewayVariables()
-endfunction
-"}}}
-" ReplaceString {{{
-function! s:ReplaceString(str, whole, escapeArgs)
-    call s:CompareCurrentFileCurrentDirectory()
-    let r = input("Replace '".a:str."' with: ")
-    if empty(r)
-        return
-    endif
-
-    call s:DoReplace(a:str, r, a:whole, a:escapeArgs)
-endfunction
-"}}}
 " Replace {{{
 function! s:Replace(whole, argv)
     call s:SetGatewayVariables()
@@ -1934,13 +1821,8 @@ function! s:ReplaceUndo(bang)
         endif
     endif
 
-    if g:EasyGrepWindow == 0
-        call setqflist(s:LastErrorList)
-        cfirst
-    else
-        call setloclist(0,s:LastErrorList)
-        lfirst
-    endif
+    call s:SetErrorList(s:LastErrorList)
+    call s:GotoStartErrorList()
 
     let bufList = s:GetVisibleBuffers()
 
@@ -2028,6 +1910,8 @@ function! s:ReplaceUndo(bang)
     return s:ClearGatewayVariables()
 endfunction
 "}}}
+" }}}
+" Grep Implementation {{{
 " DoGrep {{{
 function! s:DoGrep(word, add, whole, count, escapeArgs)
     call s:CreateDict()
@@ -2044,6 +1928,7 @@ function! s:DoGrep(word, add, whole, count, escapeArgs)
     let commandIsVimgrep = (com == "vimgrep")
     let commandIsGrep = !commandIsVimgrep && (stridx(&grepprg, "grep ") == 0)
     let commandIsFindstr = !commandIsVimgrep && (stridx(&grepprg, "findstr ") == 0)
+    let commandIsAck = !commandIsVimgrep && (stridx(&grepprg, "ack") == 0)
 
     let s1 = ""
     let s2 = ""
@@ -2084,11 +1969,13 @@ function! s:DoGrep(word, add, whole, count, escapeArgs)
             let opts .= "-R "
         elseif commandIsFindstr
             let opts .= "/S "
+        elseif commandIsAck
+            " do nothing
         endif
     endif
 
     if g:EasyGrepIgnoreCase
-        if commandIsGrep
+        if commandIsGrep || commandIsAck
             let opts .= "-i "
         elseif commandIsFindstr
             let opts .= "/I "
@@ -2128,6 +2015,10 @@ function! s:DoGrep(word, add, whole, count, escapeArgs)
 
     let failed = 0
     try
+        "if g:EasyGrepRecursive
+            "call s:Info("Running a recursive search, this may take a while")
+        "endif
+
         let grepCommand = a:count.win.com.a:add." ".opts." ".s1.word.s2." ".filesToGrep
         silent execute grepCommand
     catch
@@ -2170,6 +2061,75 @@ function! s:DoGrep(word, add, whole, count, escapeArgs)
     return 1
 endfunction
 " }}}
+" HasMatches{{{
+function! s:HasMatches()
+    return !empty(s:GetErrorList())
+endfunction
+"}}}
+" HasFilesThatMatch{{{
+function! s:HasFilesThatMatch()
+    let saveFilesToGrep = s:FilesToGrep
+
+    call s:BuildPatternList("\n")
+    let patternList = split(s:FilesToGrep, "\n")
+    for p in patternList
+        let p = s:Trim(p)
+        let fileList = split(glob(p), "\n")
+        for f in fileList
+            if filereadable(f)
+                let s:FilesToGrep = saveFilesToGrep
+                return 1
+            endif
+        endfor
+    endfor
+
+    let s:FilesToGrep = saveFilesToGrep
+    return 0
+endfunction
+"}}}
+" WarnNoMatches {{{
+function! s:WarnNoMatches(pattern)
+    if s:IsModeBuffers()
+        let fpat = "*Buffers*"
+    elseif s:IsModeAll()
+        let fpat = "*"
+    else
+        let fpat = s:GetPatternList(" ", 0)
+    endif
+
+    let r = g:EasyGrepRecursive ? " (Recursive)" : ""
+    let h = g:EasyGrepHidden    ? " (Hidden)"    : ""
+
+    call s:Warning("No matches for '".a:pattern."'")
+    call s:Warning("File Pattern: ".fpat.r.h)
+    if g:EasyGrepSearchCurrentBufferDir
+        let dirs = s:GetBufferDirsList()
+    else
+        let dirs = [ '.' ]
+    endif
+    let s = "Directories:"
+    for d in dirs
+        if d == "."
+            let d = getcwd()
+        endif
+        call s:Warning(s." ".d)
+        let s = "            "
+    endfor
+endfunction
+" }}}
+" }}}
+" Replace Implementation {{{
+" ReplaceString {{{
+function! s:ReplaceString(str, whole, escapeArgs)
+    call s:CompareCurrentFileCurrentDirectory()
+    let r = input("Replace '".a:str."' with: ")
+    if empty(r)
+        return
+    endif
+
+    call s:DoReplace(a:str, r, a:whole, a:escapeArgs)
+endfunction
+"}}}
 " DoReplace {{{
 function! s:DoReplace(target, replacement, whole, escapeArgs)
 
@@ -2178,10 +2138,7 @@ function! s:DoReplace(target, replacement, whole, escapeArgs)
     endif
 
     let target = a:escapeArgs ? s:EscapeSpecial(a:target) : a:target
-    let replacement = a:escapeArgs ? s:EscapeSpecial(a:replacement) : a:replacement
-
-    let s:LastTarget = target
-    let s:LastReplacement = replacement
+    let replacement = a:replacement
 
     let s:LastErrorList = deepcopy(s:GetErrorList())
     let numMatches = len(s:LastErrorList)
@@ -2403,6 +2360,118 @@ function! s:DoReplace(target, replacement, whole, escapeArgs)
 endfunction
 "}}}
 " }}}
+" ResultList Functions {{{
+" GetErrorList {{{
+function! s:GetErrorList()
+    if g:EasyGrepWindow == 0
+        return getqflist()
+    else
+        return getloclist(0)
+    endif
+endfunction
+"}}}
+" GetErrorListName {{{
+function! s:GetErrorListName()
+    if g:EasyGrepWindow == 0
+        return 'quickfix'
+    else
+        return 'location list'
+    endif
+endfunction
+"}}}
+" SetErrorList {{{
+function! s:SetErrorList(lst)
+    if g:EasyGrepWindow == 0
+        call setqflist(a:lst)
+    else
+        call setloclist(0,a:lst)
+    endif
+endfunction
+"}}}
+" GotoStartErrorList {{{
+function! s:GotoStartErrorList()
+    if g:EasyGrepWindow == 0
+        cfirst
+    else
+        lfirst
+    endif
+endfunction
+"}}}
+" ResultListFilter {{{
+function! s:ResultListFilter(...)
+    let mode = 'g'
+
+    let filterlist = []
+    for s in a:000
+        if s[0] == '-'
+            if s == '-v'
+                let mode = 'v'
+            elseif s == '-g'
+                if mode == 'v'
+                    call s:Error("Multiple -v / -g arguments given")
+                    return
+                endif
+                let mode = 'g'
+            else
+                call s:Error("Invalid command line switch")
+                return
+            endif
+        else
+            call add(filterlist, s)
+        endif
+    endfor
+
+    if empty(filterlist)
+        call s:Error("Missing pattern to filter")
+        return
+    endif
+
+    let lst = s:GetErrorList()
+    if empty(lst)
+        call s:Error("Error list is empty")
+        return
+    endif
+
+    let newlst = []
+    for d in lst
+        let matched = 0
+        for f in filterlist
+            let r = match(d.text, f)
+            if mode == 'g'
+                let matched = (r != -1)
+            else
+                let matched = (r == -1)
+            endif
+            if matched == 1
+                call add(newlst, d)
+                break
+            endif
+        endfor
+    endfor
+
+    call s:SetErrorList(newlst)
+endfunction
+"}}}
+" ResultListOpen {{{
+function! s:ResultListOpen(...)
+    let lst = s:GetErrorList()
+
+    if empty(lst)
+        call s:Error("Error list is empty")
+        return
+    endif
+
+    let lastbnum = -1
+    for item in lst
+        if item.bufnr != lastbnum
+            exe "tabnew ".bufname(item.bufnr)
+            let lastbnum = item.bufnr
+        endif
+    endfor
+endfunction
+"}}}
+" }}}
+" }}}
 
 " Commands {{{
 command! -bang -nargs=+ Grep :call s:GrepCommandLine( <q-args> , "", "<bang>")
@@ -2412,7 +2481,8 @@ command! GrepOptions :call <sid>GrepOptions()
 command! -bang -nargs=+ Replace :call s:Replace("<bang>", <q-args>)
 command! -bang ReplaceUndo :call s:ReplaceUndo("<bang>")
 
-command! -nargs=+ FilterErrorlist :call s:FilterErrorlist(<f-args>)
+command! -nargs=0 ResultListOpen :call s:ResultListOpen()
+command! -nargs=+ ResultListFilter :call s:ResultListFilter(<f-args>)
 "}}}
 " Keymaps {{{
 if !hasmapto("<plug>EgMapGrepOptions")
