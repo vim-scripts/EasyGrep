@@ -1,19 +1,12 @@
 This is a mirror of http://www.vim.org/scripts/script.php?script_id=2438
 
-EasyGrep makes using vimgrep easier.  When using EasyGrep, searching for a word is as easy as typing <leader>vv (v v, not double-u) over the word for which you want to search.  This search can also be accomplished with the :Grep command.
+EasyGrep is a plugin for performing search and replace operations through multiple files. Vim already has builtin support for searching through files with its 'vimgrep' and 'grep' commands, but EasyGrep makes using them much, much easier. It also provides a powerful "Replace in Files" operation, something that is not very easy to do in Vim by default. With EasyGrep, you can specify with high-precision exactly the type of files you want to search, whether it be all files, only open buffers, only files matching a pattern, etc. Additionally, you can easily specify searching through hidden files, case-sensitivity, performing a recursive search, and many more options that make searching more easy.
 
-EasyGrep provides three modes in which you can do your searches:
-  All - all files will be searched  (default)
-  Buffers - all files currently open in vim will be searched
-  TrackExt - all files that match the extension of the currently opened file will be searched.  Additionally, this extension can be mapped to a user defined set of extensions that will also be searched (see EasyGrepFileAssociations).
-    For example: when test.cpp is open, files that match any one of *.cpp *.hpp *.cxx *.hxx *.cc *.c *.h will be searched when a search is initiated.
-
-Setting options is easy, simply type <leader>vo or :GrepOptions.  EasyGrep provides a great set of defaults but can also be configured to start up just how you like it; see the script for these options.  Most vimgrep (and grepprg) options are supported.  
+EasyGrep provides both key mappings and commands to make search and replace easy. When using EasyGrep, searching for a word is as easy as typing <leader>vv (v v, not double-u) over the word for which you want to search.  This search can also be accomplished with the :Grep command and a user-specified pattern. Performing a "replace in files" is similar; type <leader>vr or use the :Replace command. Setting options is easy, simply type <leader>vo or :GrepOptions.  EasyGrep provides a great set of defaults but can also be configured to start up just how you like it; see the script for these options.  Most vimgrep (and grepprg) options are supported.  
 
 For a screencast of the script in action go here: http://downloads.veryspeedy.net/vim/EasyGrep.gif
 
-Full keymappings and commands:
-
+Keymappings:
 
     <Leader>vv  - Grep for the word under the cursor, match all occurences,
                   like |gstar|
@@ -21,19 +14,11 @@ Full keymappings and commands:
                   |star|
     <Leader>va  - Like vv, but add to existing list
     <Leader>vA  - Like vV, but add to existing list
-
     <Leader>vr  - Perform a global search search on the word under the cursor
                   and prompt for a pattern with which to replace it.
-
-In addition to grepping the word under the cursor, text may be visually
-selected and these mappings may be used analogously to as they are used above.
-Visual selections will automatically be escaped so as not to confuse the
-selection with a regular expression.
-
-    Each of the above commands will search files according to settings
-    controlled by:
-
     <Leader>vo  - Select the files to search in and set grep options
+
+Commands:
 
     :Grep [arg]
         Search for the specified arg, like <Leader>vv.  When an ! is added,

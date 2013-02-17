@@ -7,7 +7,7 @@ Author:      Dan Price   vim@danprice.fastmail.net       *EasyGrep_Author*
 
 Goal:        To be an easy to use, powerful find and     |EasyGrep_Motivation|
              replace tool for users of all skill levels.
-Version:     0.98                                        |EasyGrep_History|
+Version:     1.1                                         |EasyGrep_History|
 
 License:     Public domain, no restrictions whatsoever   |EasyGrep_License|
 Contribute:  Please report any bugs or suggestions       |EasyGrep_Bugs|
@@ -22,14 +22,16 @@ Contribute:  Please report any bugs or suggestions       |EasyGrep_Bugs|
              1. Motivation.................|EasyGrep_Motivation|
              2. Operation..................|EasyGrep_Operation|
                 2.1 Modes..................|EasyGrep_OperationModes|
+                2.2 Performance............|EasyGrep_Performance|
              3. Keymaps....................|EasyGrep_Keymaps|
-                3.1 Option Mappings........|EasyGrep_KeymapsOptions|
-                3.2 Mapping Customization..|EasyGrep_KeymapsCustomization|
+                3.1 Default Bindings ......|EasyGrep_KeymapsDefault|
+                3.2 Option Mappings........|EasyGrep_KeymapsOptions|
+                3.3 Mapping Customization..|EasyGrep_KeymapsCustomization|
              4. Commands...................|EasyGrep_Commands|
              5. Options....................|EasyGrep_Options|
-                5.1  Summary...............|EasyGrep_OptionsSummary|
-                5.2  Explorer..............|EasyGrep_OptionsExplorer|
-                5.3  Details...............|EasyGrep_OptionsDetail|
+                5.1 Summary................|EasyGrep_OptionsSummary|
+                5.2 Explorer...............|EasyGrep_OptionsExplorer|
+                5.3 Details................|EasyGrep_OptionsDetail|
              6. Bugs.......................|EasyGrep_Bugs|
              7. Future.....................|EasyGrep_Future|
              8. History....................|EasyGrep_History|
@@ -37,7 +39,7 @@ Contribute:  Please report any bugs or suggestions       |EasyGrep_Bugs|
 
 
 ==============================================================================
-  Motivation                                             *EasyGrep_Motivation*
+  1. Motivation                                          *EasyGrep_Motivation*
 ==============================================================================
 
 EasyGrep's main goal is to make search and replace in files easy.  Other Vim
@@ -64,19 +66,20 @@ I hope that EasyGrep makes Vim more fun, productive, and easy for you to use.
 
 
 ==============================================================================
-  Operation                                               *EasyGrep_Operation*
+  2. Operation                                            *EasyGrep_Operation*
 ==============================================================================
 
 EasyGrep makes using Vim's grep capabilities easier.  When using EasyGrep,
-searching for a word is as easy as typing a three keypress mapping
-|EasyGrep_Keymaps|.  In addition to keymaps, search and replace can be invoked
-through commands |EasyGrep_Commands|.
+searching for a word in multiple files is as easy as typing a simple mapping
+(see |EasyGrep_Keymaps)|.  In addition to keymaps, search and replace can be
+invoked through commands (see |EasyGrep_Commands)|.
 
-To determine which files to search, EasyGrep provides three modes, described
-in the next section.
+To determine which files to search, EasyGrep provides several builtinmodes,
+described in the next section.
 
-
-Search Modes                                         |EasyGrep_OperationModes|
+------------------------------------------------------------------------------
+ 2.1 Search Modes                                    *EasyGrep_OperationModes*
+------------------------------------------------------------------------------
 
 All
     All files will be searched  (default).
@@ -88,12 +91,12 @@ Buffers
 TrackExt
     Files that match the extension of the currently opened file will be
     searched.  Additionally, this extension can be mapped to a user defined
-    set of extensions that will also be searched |EasyGrepFileAssociations|. 
+    set of extensions that will also be searched |EasyGrepFileAssociations|.
 
     For example: in the default configuration, when test.cpp is open, files
     that match any one of
 
-        *.cpp *.hpp *.cxx *.hxx *.cc *.c *.h 
+        *.cpp *.hpp *.cxx *.hxx *.cc *.c *.h
 
     will be searched when a Grep is initiated.  I find this mode to be the
     most useful.
@@ -102,13 +105,38 @@ User
     Specify a custom set of file extensions to search.
 
 
-These modes can be quickly changed through the |EasyGrep_OptionsExplorer| or
-|EasyGrep_KeymapsOptions|.
+The startup mode is indicated by |EasyGrepMode|. These modes can be quickly
+changed through the |EasyGrep_OptionsExplorer| or |EasyGrep_KeymapsOptions|.
+
+
+------------------------------------------------------------------------------
+ 2.2 Performance                                         *EasyGrep_Performance*
+------------------------------------------------------------------------------
+
+By default, EasyGrep completes its searches using Vim's vimgrep command. While
+easy to use, vimgrep's searching time can be considerably longer than
+traditional tools like your system's grep command. Because of this, EasyGrep
+provides several options to allow you to control your performance:
+
+- Consider setting EasyGrep to use your system's grep command.
+  (see |EasyGrepCommand|)
+- Consider whether recursive operation is set and whether you need it on all
+  the time. Note that it can be toggled easily with '<leader>vyr'.
+  (see |EasyGrepRecursive|)
+- Consider setting grep exclusions if your grep command supports it.
+  (see |EasyGrepFilesToExclude|)
 
 
 ==============================================================================
-  Keymaps                                                   *EasyGrep_Keymaps*
+  3. Keymaps                                                *EasyGrep_Keymaps*
 ==============================================================================
+
+This section discusses EasyGrep's default keybindings and how to customize
+them.
+
+------------------------------------------------------------------------------
+ 3.1 Default Bindings                                *EasyGrep_KeymapsDefault*
+------------------------------------------------------------------------------
 
 EasyGrep uses Vim's leader key, which is by default '\'.  For information on
 this key, type ":help mapleader".
@@ -134,7 +162,7 @@ Visual selections will automatically be escaped so as not to confuse the
 selection with a regular expression.
 
     e.g. Selecting the text inside the quotes here "/<word\>" will match
-    against "\<word\>" but not against "word".  
+    against "\<word\>" but not against "word".
 
 To search with a regular expression, see the :Grep command |EasyGrep_Commands|
 
@@ -147,19 +175,25 @@ controlled by:
 For the options provided, see |EasyGrep_Options|.
 
 
-                                                     *EasyGrep_KeymapsOptions*
+------------------------------------------------------------------------------
+ 3.2 Option Mappings                                 *EasyGrep_KeymapsOptions*
+------------------------------------------------------------------------------
 
 For each of the options presented in the options explorer, there is a mapping
-that allows a direct change of this option.  The pattern is <Leader>vy* ,
-where star is the value listed in the options window for each of the options.
+that allows a direct change of this option.  The mapping for option is
+<Leader>vy<option>, where <option> is the character listed in the options
+window for each of the options.
 
-    e.g. To toggle recursive mode, type '\vyr'
+    e.g. To change to buffers mode, type '\vyb'
+    e.g. To toggle recursive search, type '\vyr'
 
 See |EasyGrepOptionPrefix| to change the prefix from '\vy' or to turn these
 keymappings off.
 
 
-                                               *EasyGrep_KeymapsCustomization*
+------------------------------------------------------------------------------
+ 3.3 Mapping Customization                     *EasyGrep_KeymapsCustomization*
+------------------------------------------------------------------------------
 
 Beyond EasyGrepOptionPrefix, other keymaps may be remapped to your liking.
 See the "Keymaps" section of EasyGrep.vim for the names of these items.
@@ -172,7 +206,7 @@ e.g.
 
 
 ==============================================================================
-  Commands                                                 *EasyGrep_Commands*
+  4. Commands                                              *EasyGrep_Commands*
 ==============================================================================
 
                                                                        *:Grep*
@@ -185,7 +219,8 @@ e.g.
     Search for the specified arg, add to existing file list, as in
     <Leader>va.  When an ! is added, search like <Leader>vA
 
-    The Above commands can additionally accept command switches:
+    The Above commands can additionally accept command switches that override
+    the configured settings:
     -r   Perform a recursive search
     -R   Perform a recursive search
     -i   Perform a case-insensitive search
@@ -232,59 +267,47 @@ indicated by the 'magic' option (see ":help 'magic'").
 
 
 ==============================================================================
-  Options                                                   *EasyGrep_Options*
+  5. Options                                                *EasyGrep_Options*
 ==============================================================================
 
-Options Summary                                      *EasyGrep_OptionsSummary*
+------------------------------------------------------------------------------
+ 5.1 Options Summary                                 *EasyGrep_OptionsSummary*
+------------------------------------------------------------------------------
 
  Option                               Description
-------------------------------------------------------------------------------
-|EasyGrepFileAssociations|            Specifies the location of the EasyGrep
-                                      file associations
-------------------------------------------------------------------------------
-|EasyGrepMode|                        Mode of operation
-------------------------------------------------------------------------------
-|EasyGrepCommand|                     Whether to use vimgrep or grepprg
-------------------------------------------------------------------------------
-|EasyGrepRecursive|                   Recursive searching
-------------------------------------------------------------------------------
-|EasyGrepIgnoreCase|                  Case-sensitivity in searches
-------------------------------------------------------------------------------
-|EasyGrepHidden|                      Include hidden files in searches
-------------------------------------------------------------------------------
-|EasyGrepAllOptionsInExplorer|        How many options to show in the explorer
-------------------------------------------------------------------------------
-|EasyGrepWindow|                      Quickfix or location list
-------------------------------------------------------------------------------
-|EasyGrepWindowPosition|              Where the error list window is opened
-------------------------------------------------------------------------------
-|EasyGrepOpenWindowOnMatch|           Open grep window on successful match
-------------------------------------------------------------------------------
-|EasyGrepEveryMatch|                  Match multiple times per line
-------------------------------------------------------------------------------
-|EasyGrepJumpToMatch|                 Jump to first match
-------------------------------------------------------------------------------
-|EasyGrepSearchCurrentBufferDir|      Whether to search current buffers dir
-                                      in addition to working dir
-------------------------------------------------------------------------------
-|EasyGrepInvertWholeWord|             Invert the meaning of whole word for vv
-                                      and vV keymaps
-------------------------------------------------------------------------------
-|EasyGrepFileAssociationsInExplorer|  Whether to show the file associations
-                                      list in the options explorer
-------------------------------------------------------------------------------
-|EasyGrepReplaceWindowMode|           Controls whether to use tabs or splits 
-                                      when replacing in files
-------------------------------------------------------------------------------
-|EasyGrepReplaceAllPerFile|           Replace on per file or global basis
-------------------------------------------------------------------------------
-|EasyGrepOptionPrefix|                Specify the keymap for toggling options
-------------------------------------------------------------------------------
-|EasyGrepExtraWarnings|               Whether to show extra warnings
-------------------------------------------------------------------------------
+`````````````````````````````````   ````````````````````````````````````````
+o |EasyGrepFileAssociations|            - Specifies the location of the EasyGrep
+                                        file associations
+o |EasyGrepMode|                        - Mode of operation
+o |EasyGrepCommand|                     - Whether to use vimgrep or grepprg
+o |EasyGrepRecursive|                   - Recursive searching
+o |EasyGrepIgnoreCase|                  - Case-sensitivity in searches
+o |EasyGrepHidden|                      - Include hidden files in searches
+o |EasyGrepFilesToExclude|              - Comma-separated list of files patterns
+                                        that will be excluded from the search
+o |EasyGrepAllOptionsInExplorer|        - How many options to show in the explorer
+o |EasyGrepWindow|                      - Quickfix or location list
+o |EasyGrepWindowPosition|              - Where the error list window is opened
+o |EasyGrepOpenWindowOnMatch|           - Open grep window on successful match
+o |EasyGrepEveryMatch|                  - Match multiple times per line
+o |EasyGrepJumpToMatch|                 - Jump to first match
+o |EasyGrepSearchCurrentBufferDir|      - Whether to search current buffers dir
+                                        in addition to working dir
+o |EasyGrepInvertWholeWord|             - Invert the meaning of whole word for vv
+                                        and vV keymaps
+o |EasyGrepFileAssociationsInExplorer|  - Whether to show the file associations
+                                        list in the options explorer
+o |EasyGrepReplaceWindowMode|           - Controls whether to use tabs or splits
+                                        when replacing in files
+o |EasyGrepReplaceAllPerFile|           - Replace on per file or global basis
+o |EasyGrepOptionPrefix|                - Specify the keymap for toggling options
+o |EasyGrepExtraWarnings|               - Whether to show extra warnings
+o |EasyGrepDefaultUserPattern|          - The default 'User' mode pattern
 
 
-Options Explorer                                    *EasyGrep_OptionsExplorer*
+------------------------------------------------------------------------------
+ 5.2 Options Explorer                              *EasyGrep_OptionsExplorer*
+------------------------------------------------------------------------------
 
     To invoke the options explorer, type '\vo' (default).  The options
     explorer presents all of EasyGrep's customizable options and provides
@@ -296,9 +319,13 @@ Options Explorer                                    *EasyGrep_OptionsExplorer*
     be searched for a given configuration.
 
 
-Options Details                                       *EasyGrep_OptionsDetail*
+------------------------------------------------------------------------------
+ 5.3 Options Details                                 *EasyGrep_OptionsDetail*
+------------------------------------------------------------------------------
 
-*EasyGrepFileAssociations* 
+*EasyGrepFileAssociations*
+[default=&runtimepath/plugin/EasyGrepFileAssociations]
+
 Specifies the location of a file that contains groups of files that should be
 associated with one another.  When set to an empty string "", no file read
 will be attempted.
@@ -316,89 +343,104 @@ extension, files with the .h extension will also be search.  A special feature
 of this syntax is the ability to link groups together.  For example, the C++
 group links to all files that are in the C group.
 
-
-*EasyGrepMode*
+*EasyGrepMode*  [default=0]
 Specifies the mode in which to start.
 0 - All files
 1 - Open Buffers
 2 - Track the current extension
+3 - User mode -- Use a custom, on demand set of extensions
 
 Note: I find option 2 to be the most powerful, but option 0 is activated by
 default because it is the most intuitive for users who haven't take the
 time to understand how the script works.  See |EasyGrep_OperationModes|.
 
-*EasyGrepCommand* 
+*EasyGrepCommand*  [default=0]
 Specifies the grep command to use.
 
 0 - vimgrep
 1 - grep (follows grepprg)
 
-*EasyGrepRecursive* 
+When the grep command is set to vimgrep, Vim's builtin |:vimgrep| command will
+be used.
+When the grep command is set to , Vim's builtin |:grep| command will be used.
+This command inspects the 'grepprg' variable to determine the external tool
+that will be used for the search. Note that an external tool is often faster
+to search than vimgrep (see |EasyGrep_Performance|).
+
+*EasyGrepRecursive*  [default=0]
 Specifies that recursive search be activated on start.
 
-*EasyGrepIgnoreCase* 
+*EasyGrepIgnoreCase*  [default=&ignorecase]
 Specifies the case sensitivity of searches.  Note that this can be further
 overrided for vimgrep searches with \c and \C.
 
-*EasyGrepHidden* 
+*EasyGrepHidden*  [default=0]
 Specifies that hidden files search be activated on start.  Note that hidden
 implies the unix meaning of those files that are prepended with a '.', and not
 the Windows meaning of those files with a hidden attribute.
 
-*EasyGrepAllOptionsInExplorer* 
+*EasyGrepFilesToExclude*  [default=""]
+Specifies a list of file patterns that will be excluded from the search.
+Multiple exclusions must be separated by commas. Note that these patterns will
+be passed unmodified on to the search program.
+
+Currently only supported when EasyGrepCommand=1 and your grepprg is "grep" or
+"ack".
+
+*EasyGrepAllOptionsInExplorer*  [default=0]
 Specifies that all options be included in the explorer window.
 
 Note: settting this option is very useful when you want to try out and
 learn all of the options available in this script.
 
-*EasyGrepWindow*
+*EasyGrepWindow*  [default=0]
 Specifies the window to use for matches.
 0 - quickfix
 1 - location list
 
-*EasyGrepWindowPosition*
-Specifies where the error list window is opened.  The value of this option
-must match one of Vim's splitting positional window commands, such as topleft
-or botright.
+*EasyGrepWindowPosition*  [default=""]
+Specifies where the error list window is opened.  If empty, the default
+behavior for Vim's error list opening commands will be used. If not empty, the
+value of this option must match one of Vim's splitting positional window
+commands, such as topleft or botright.
 
-*EasyGrepOpenWindowOnMatch*
+*EasyGrepOpenWindowOnMatch*  [default=1]
 Specifies whether to open the with matches after a search.
 
-*EasyGrepEveryMatch*
+*EasyGrepEveryMatch*  [default=0]
 Specifies that multiple matches on the same line be treated as different
 matches, like the g option to vimgrep.
 
-*EasyGrepJumpToMatch*
+*EasyGrepJumpToMatch*  [default=1]
 Specifies that jump to first match be activated, like the j option to vimgrep.
 
-*EasyGrepSearchCurrentBufferDir*
-Setting this option causes EasyGrep to search the current buffer's
-directory in addition to the current working directory.
+*EasyGrepSearchCurrentBufferDir*  [default=1]
+Setting this option causes EasyGrep to search not only the current directory,
+but also the directories for all buffers currently opened.
 
-*EasyGrepInvertWholeWord*
+*EasyGrepInvertWholeWord*  [default=0]
 Specifies that the whole word search keys should be inverted from their
 default meaning.  For example, when this option is activated, <Leader>vv
 matches whole word, while <Leader>vV matches everything that includes the
 word.  Note that this affects both keymappings and commands.
 
-*EasyGrepFileAssociationsInExplorer*
+*EasyGrepFileAssociationsInExplorer*  [default=0]
 Specifies whether to show the file associations list in the options explorer
 window.
 
-*EasyGrepOptionPrefix*
+*EasyGrepOptionPrefix*  [default=<leader>vy]
 Specifies the prefix that is used when building keymaps for setting options
 directly.  To specify that no option keymaps be created, set this to the empty
-string.  
+string.
 
 Default:
     let g:EasyGrepOptionPrefix='<leader>vy'
 Custom:
-    let g:EasyGrepOptionPrefix=',oe'
+    let g:EasyGrepOptionPrefix=',oe'      (where ',oe' is your custom prefix)
 None:
-    let g:EasyGrepOptionPrefix=''
+    let g:EasyGrepOptionPrefix=''         (this disables all mappings)
 
-
-*EasyGrepReplaceWindowMode*
+*EasyGrepReplaceWindowMode*  [default=0]
 Specifies the mode that the script will use when a buffer needs to be changed
 while performing a global replace.
 0 - Open a new tab for each window
@@ -411,32 +453,39 @@ option can often be more clunky than other options.
 Note: As a result of the limitation above, option 0 is the only mode that
 won't require saving the files during a replace.
 
-*EasyGrepReplaceAllPerFile*
+*EasyGrepReplaceAllPerFile*  [default=0]
 Specifies that selecting 'a' (for all) will apply the replacements on a per
 file basis, as opposed to globally as is the default.
 
-*EasyGrepExtraWarnings*
-Specifies that warnings be issued for conditions that may be valid but confuse
-some users.
+*EasyGrepExtraWarnings*  [default=1]
+Specifies that warnings be issued for conditions that may be valid but have
+the potential to confuse some users.
+
+*EasyGrepDefaultUserPattern*  [default=""]
+Specifies the default pattern for 'User' mode. (see |EasyGrepMode| and
+|EasyGrep_OperationModes|).  This pattern must be defined and non-empty if
+|EasyGrepMode| is set to start in 'User' mode.
 
 
 ==============================================================================
-  Future                                                     *EasyGrep_Future*
+  6. Future                                                  *EasyGrep_Future*
 ==============================================================================
 
 ------------------------------------------------------------------------------
-Show search progress?
-------------------------------------------------------------------------------
+set file/directory inclusions.
 create capability to include paths other than the active directories in a
 search.  e.g.  ../../include, $INCLUDE, etc.
 ------------------------------------------------------------------------------
-set file/directory exclusions
+set file/directory exclusions.
+This is currently supported with grepprg=grep or grepprg=ack but not with vimgrep.
 ------------------------------------------------------------------------------
-Build in support for ack
+Provide recommendations on the best way to use the script
+------------------------------------------------------------------------------
+Implement ResultListDo
 ------------------------------------------------------------------------------
 
 ==============================================================================
-  Bugs                                                         *EasyGrep_Bugs*
+  7. Bugs                                                      *EasyGrep_Bugs*
 ==============================================================================
 
 If you discover any bugs not listed here, please contact the |EasyGrep_Author|
@@ -452,21 +501,39 @@ Patterns with backslashes in them require double-backslash to be searched from
 the command line.  This behaviour matches the builtin / command but it may be
 unintuitive.
 ------------------------------------------------------------------------------
+Support canceling a search and print a nice message
+------------------------------------------------------------------------------
 
 
 
 ==============================================================================
-  History                                                   *EasyGrep_History*
+  8. History                                                *EasyGrep_History*
 ==============================================================================
 
+  1.1
+      Improved: much better support when grepprg is ack or grep. These tools
+          can search much more quickly than vimgrep and so may be preferable
+          to some users.
+      Feature: added a mapping to echo the command that EasyGrep will issue
+          (see 'v' in the options explorer)
+      Feature: Added keymap toggle for EasyGrepSearchCurrentBufferDir
+      Fixed: command line parsing of Grep command discarded spaces
+      Feature: added support for grep exclusions when grepprg is grep or ack
+      Feature: Added EasyGrepDefaultUserPattern option.
+          Thanks to Jesus Barcons for the suggestion.
+      Improved: Cleaned up the documentation
+      Improved: Cleaned up the internals of the script substantially
+      Improved: Formalized multi-select mode, which is when multiple file
+          extensions are selected from the options explorer
+      Improved: lots of misc fixes
   1.0
       Documentation: Added a help tag for each of the commands so that you can
-      look up more information on them.
+          look up more information on them.
       Improved: Cleaned up the internals of the script substantially
       Improved: Changed the name of FilterErrorList to ResultListFilter
       Feature: Added ResultListOpen command to open all of the files in the
           result list (aka error list)
-      Fixed: Added -- to signify the end of the command line options. Grepping 
+      Fixed: Added -- to signify the end of the command line options. Grepping
           for patterns such as '->var' are now possible with ':Grep -- ->var'
   0.98
       Highlight: The Replace and ReplaceUndo commands were reimplemented.  The
@@ -573,7 +640,7 @@ unintuitive.
 
 
 ==============================================================================
-  License                                                   *EasyGrep_License*
+  9. License                                                *EasyGrep_License*
 ==============================================================================
 
                   Public domain, no restrictions whatsoever
@@ -584,11 +651,11 @@ freer still: I've released EasyGrep in the public domain.  It took a lot of
 time and learning to get EasyGrep to work, and I want anyone to take advantage
 of my contribution.  If you see some (or many) snippets of EasyGrep's code
 that you need, use it -- you don't need to ask me, think about any copyright,
-worry about violating a license, or even note that the code came from me, just
+worry about violating a license, or even note that the code came from me; just
 use it.  My only request is that if you are thinking of forking EasyGrep (or
-enhancing, as some authors claim to do), please contact me to let me know what
-you feel is lacking in EasyGrep, and I promise I'll be receptive to correcting
-these issues.
+enhancing, as some authors claim to do), please contact me to let me know
+what you feel is lacking in EasyGrep, and I promise I'll be receptive to
+correcting these issues.
 
 
 ==============================================================================

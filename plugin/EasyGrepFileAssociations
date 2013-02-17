@@ -11,6 +11,8 @@
 " happen correctly
 " TODO: consider how extensions dominate another, try this syntax <!C>
 " TODO: consider extension ordering for dominating
+" TODO: consider syntax to set exclusions
+" TODO: perhaps have a global exclude flag
 
 Ada=*.adb *.ads *.ada *.gpr *.ada_m *.adc
 Assembly=*.asm *.[sS] *.[aA] *.mac *.lst *.i
